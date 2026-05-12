@@ -1,14 +1,16 @@
 """System tray icon and menu for microgesture control."""
 
+from __future__ import annotations
+
 import logging
-import threading
 from enum import Enum, auto
-from typing import Callable, Optional
+from typing import Callable
 
 from PIL import Image, ImageDraw
 
 logger = logging.getLogger(__name__)
 
+# ── icon drawing ──────────────────────────────────────────────────────────
 
 class TrayState(Enum):
     NORMAL = auto()
@@ -29,62 +31,95 @@ _ICONS = {
     TrayState.SLEEP: _make_icon("gray"),
 }
 
+# ── callbacks type ─────────────────────────────────────────────────────────
+
+class TrayCallbacks:
+    """Typed callbacks the tray expects from the pipeline / main."""
+
+    def __init__(
+        self,
+        toggle_tracking: Callable[[], None],
+        set_sensitivity: Callable[[float], None],
+        set_right_click: Callable[[str], None],
+        quit_app: Callable[[], None],
+    ):
+        self.toggle_tracking = toggle_tracking
+        self.set_sensitivity = set_sensitivity
+        self.set_right_click = set_right_click
+        self.quit_app = quit_app
+
+
+# ── tray ───────────────────────────────────────────────────────────────────
 
 class SystemTray:
     """pystray system tray with menu for gesture control."""
 
-    def __init__(self, callbacks: dict):
-        """
-        callbacks keys: toggle_tracking, set_sensitivity, set_right_click, quit_app
-        """
-        self._callbacks = callbacks
+    _SENSITIVITY_MAP = {"low": 0.5, "medium": 0.8, "high": 1.6}
+
+    def __init__(self, callbacks: TrayCallbacks):
+        self._cb = callbacks
         self._icon = None
         self._state = TrayState.NORMAL
-        self._running = False
+        self._sensitivity_level = "medium"
+        self._right_click_mode = "fist_tap"
+        self._tracking_enabled = True
+
+    # ── state mutators (call pipeline + refresh menu) ──────────────────
+
+    def _refresh(self) -> None:
+        if self._icon:
+            self._icon.update_menu()
+
+    def _on_toggle_tracking(self) -> None:
+        self._tracking_enabled = not self._tracking_enabled
+        self._cb.toggle_tracking()
+        self._refresh()
+
+    def _on_sensitivity(self, level: str) -> None:
+        self._sensitivity_level = level
+        self._cb.set_sensitivity(self._SENSITIVITY_MAP[level])
+        self._refresh()
+
+    def _on_right_click_mode(self, mode: str) -> None:
+        self._right_click_mode = mode
+        self._cb.set_right_click(mode)
+        self._refresh()
+
+    def _on_quit(self) -> None:
+        self._cb.quit_app()
+
+    # ── menu ───────────────────────────────────────────────────────────
 
     def _build_menu(self):
         from pystray import Menu, MenuItem
 
-        def _toggle(icon, item):
-            self._callbacks.get("toggle_tracking", lambda: None)()
-
-        def _sensitivity_low(icon, item):
-            self._callbacks.get("set_sensitivity", lambda v: None)(1.2)
-
-        def _sensitivity_med(icon, item):
-            self._callbacks.get("set_sensitivity", lambda v: None)(2.4)
-
-        def _sensitivity_high(icon, item):
-            self._callbacks.get("set_sensitivity", lambda v: None)(3.6)
-
-        def _rc_fist(icon, item):
-            self._callbacks.get("set_right_click", lambda v: None)("fist_tap")
-
-        def _rc_two_finger(icon, item):
-            self._callbacks.get("set_right_click", lambda v: None)("two_finger")
-
-        def _quit(icon, item):
-            self._icon.stop() if self._icon else None
-            self._callbacks.get("quit_app", lambda: None)()
-
-        return Menu(
-            MenuItem("Toggle Tracking", _toggle, default=True),
-            Menu.SEPARATOR,
-            MenuItem("Sensitivity", Menu(
-                MenuItem("Low", _sensitivity_low, checked=lambda item: False),
-                MenuItem("Medium", _sensitivity_med, checked=lambda item: True),
-                MenuItem("High", _sensitivity_high, checked=lambda item: False),
-            )),
-            MenuItem("Right Click Mode", Menu(
-                MenuItem("Fist + Tap", _rc_fist, checked=lambda item: True),
-                MenuItem("Two Finger Tap", _rc_two_finger, checked=lambda item: False),
-            )),
-            Menu.SEPARATOR,
-            MenuItem("Quit", _quit),
+        sens_menu = Menu(
+            MenuItem("Low", lambda i: self._on_sensitivity("low"),
+                     checked=lambda i: self._sensitivity_level == "low"),
+            MenuItem("Medium", lambda i: self._on_sensitivity("medium"),
+                     checked=lambda i: self._sensitivity_level == "medium"),
+            MenuItem("High", lambda i: self._on_sensitivity("high"),
+                     checked=lambda i: self._sensitivity_level == "high"),
         )
 
-    def _on_quit_callback(self):
-        self._running = False
+        rc_menu = Menu(
+            MenuItem("Fist + Tap", lambda i: self._on_right_click_mode("fist_tap"),
+                     checked=lambda i: self._right_click_mode == "fist_tap"),
+            MenuItem("Two Finger", lambda i: self._on_right_click_mode("two_finger"),
+                     checked=lambda i: self._right_click_mode == "two_finger"),
+        )
+
+        return Menu(
+            MenuItem("Toggle Tracking", lambda i: self._on_toggle_tracking(),
+                     checked=lambda i: self._tracking_enabled),
+            Menu.SEPARATOR,
+            MenuItem("Sensitivity", sens_menu),
+            MenuItem("Right Click", rc_menu),
+            Menu.SEPARATOR,
+            MenuItem("Quit", lambda i: self._on_quit()),
+        )
+
+    # ── lifecycle ──────────────────────────────────────────────────────
 
     def set_state(self, state: TrayState) -> None:
         self._state = state
@@ -100,10 +135,9 @@ class SystemTray:
             "MicroGesture",
             self._build_menu(),
         )
-        self._running = True
         self._icon.run()
 
     def stop(self) -> None:
-        self._running = False
         if self._icon:
             self._icon.stop()
+            self._icon = None

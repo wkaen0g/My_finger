@@ -21,7 +21,7 @@ from .pipeline.gesture_engine import Gesture, RuleEngine
 from .pipeline.pinch import PinchDetector
 from .pipeline.scroll import ScrollDetector
 from .system.input import InputController
-from .system.tray import SystemTray, TrayState
+from .system.tray import SystemTray, TrayCallbacks, TrayState
 
 logger = logging.getLogger(__name__)
 
@@ -85,16 +85,21 @@ class GesturePipeline:
             pinch_threshold_ratio=config.get("gesture", "pinch_threshold_ratio", default=0.35),
         )
         self.tap = AirTapDetector(
-            tap_threshold=config.get("gesture", "tap_ratio_threshold", default=0.5),
-            suppress_threshold=config.get("gesture", "tap_suppress_threshold", default=0.2),
-            rebound_frames=config.get("gesture", "tap_rebound_frames", default=5),
+            tap_threshold=config.get("gesture", "tap_threshold", default=0.3),
+            min_bend=config.get("gesture", "tap_min_bend", default=0.15),
+            suppress_threshold=config.get("gesture", "tap_suppress_threshold", default=0.1),
+            bend_timeout=config.get("gesture", "tap_bend_timeout", default=12),
+            rebound_timeout=config.get("gesture", "tap_rebound_timeout", default=8),
             cooldown_frames=config.get("gesture", "tap_cooldown_frames", default=8),
         )
         self._tap_result: TapResult | None = None
         self.pinch = PinchDetector(
             pinch_threshold_ratio=config.get("gesture", "pinch_threshold_ratio", default=0.35),
         )
+        import pyautogui
+        sw, sh = pyautogui.size()
         self.cursor = CursorController(
+            screen_width=sw, screen_height=sh,
             sensitivity=config.get("cursor", "sensitivity", default=0.6),
             deadzone=config.get("cursor", "deadzone", default=0.003),
             beta=config.get("cursor", "smoothing_beta", default=0.007),
@@ -102,6 +107,7 @@ class GesturePipeline:
             min_cutoff=config.get("cursor", "smoothing_cutoff", default=1.0),
         )
         self.scroll = ScrollDetector(
+            screen_height=sh,
             sensitivity=config.get("scroll", "sensitivity", default=40.0),
             beta=config.get("scroll", "smoothing_beta", default=0.007),
             fcmin=config.get("scroll", "smoothing_fcmin", default=1.0),
@@ -159,11 +165,11 @@ class GesturePipeline:
 
             dratio_str = ""
             if self._tap_result is not None:
-                dratio_str = f" dR={self._tap_result.dratio:+.3f}"
+                dratio_str = f" 变化={self._tap_result.dratio:+.3f}"
                 if self._tap_result.suppress_cursor:
-                    dratio_str += " SUPPRESS"
+                    dratio_str += " 抑制"
 
-            cv2.putText(display, f"pinch={pinch:.3f} tapR={tap_ratio:.2f}{dratio_str}",
+            cv2.putText(display, f"捏合={pinch:.3f} 弯曲比={tap_ratio:.2f}{dratio_str}",
                         (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
 
             # Tip-MCP distances
@@ -223,6 +229,7 @@ class GesturePipeline:
         elif gesture.gesture == Gesture.PINCH:
             self.cursor.unfreeze()
             self._handle_cursor_move(hand.landmarks)
+            self._handle_pinch(hand.landmarks)
 
         if self._prev_gesture == Gesture.TWO_FINGER and gesture.gesture != Gesture.TWO_FINGER:
             self.scroll.stop()
@@ -327,12 +334,12 @@ def main() -> None:
 
     pipeline = GesturePipeline(config)
 
-    tray = SystemTray({
-        "toggle_tracking": pipeline.toggle_tracking,
-        "set_sensitivity": pipeline.set_sensitivity,
-        "set_right_click": pipeline.set_right_click,
-        "quit_app": lambda: shutdown(pipeline, tray),
-    })
+    tray = SystemTray(TrayCallbacks(
+        toggle_tracking=pipeline.toggle_tracking,
+        set_sensitivity=pipeline.set_sensitivity,
+        set_right_click=pipeline.set_right_click,
+        quit_app=lambda: shutdown(pipeline, tray),
+    ))
 
     pipeline._on_status_change = lambda c: tray.set_state(
         TrayState.NORMAL if c else TrayState.NO_CAMERA

@@ -59,15 +59,19 @@ class OneEuroFilter:
 class CursorController:
     """Maps fingertip displacement to cursor movement with smoothing."""
 
-    def __init__(self, sensitivity: float = 1.5, deadzone: float = 0.003,
+    def __init__(self, screen_width: int = 1920, screen_height: int = 1080,
+                 sensitivity: float = 1.5, deadzone: float = 0.003,
                  beta: float = 0.007, fcmin: float = 1.0, min_cutoff: float = 1.0,
                  fps: float = 30.0):
         self.sensitivity = sensitivity
         self.deadzone = deadzone
+        self._sw = screen_width
+        self._sh = screen_height
         self._filter_x = OneEuroFilter(beta, fcmin, min_cutoff, fps)
         self._filter_y = OneEuroFilter(beta, fcmin, min_cutoff, fps)
         self._prev_raw: Optional[Tuple[float, float]] = None
         self._frozen = False
+        self._frame = 0
 
     def freeze(self) -> None:
         self._frozen = True
@@ -84,6 +88,7 @@ class CursorController:
 
     def update(self, x: float, y: float) -> Tuple[float, float]:
         """Returns (dx, dy) cursor delta in pixels, or (0,0) when frozen."""
+        self._frame += 1
         if self._frozen:
             return (0.0, 0.0)
 
@@ -94,15 +99,19 @@ class CursorController:
             self._prev_raw = (sx, sy)
             return (0.0, 0.0)
 
-        raw_dx = (sx - self._prev_raw[0]) * self.sensitivity * 1920
-        raw_dy = (sy - self._prev_raw[1]) * self.sensitivity * 1080
+        raw_dx = (sx - self._prev_raw[0]) * self.sensitivity * self._sw
+        raw_dy = (sy - self._prev_raw[1]) * self.sensitivity * self._sh
 
         # Dead zone: ignore sub-pixel jitter
-        dz = self.deadzone * 1920
+        dz = self.deadzone * self._sw
         if abs(raw_dx) < dz:
             raw_dx = 0.0
         if abs(raw_dy) < dz:
             raw_dy = 0.0
+
+        if self._frame % 5 == 0 and (raw_dx != 0 or raw_dy != 0):
+            logger.debug("光标: 感知=%.1f×%.1f 死区=%.1f",
+                         raw_dx, raw_dy, dz)
 
         self._prev_raw = (sx, sy)
         return (raw_dx, raw_dy)

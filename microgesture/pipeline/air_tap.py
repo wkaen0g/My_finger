@@ -1,18 +1,39 @@
-"""Air tap detection via index finger distance ratio + cursor suppression."""
+"""Air tap detection via index finger distance ratio + integral phasing.
+
+ratio = |TIP(8) - MCP(5)| / |PIP(6) - MCP(5)|
+
+Straight finger: ratio ≈ 2.5–3.0
+Bending finger:   ratio drops → Δratio negative
+Rebounding:       ratio rises → Δratio positive
+
+Tap detection uses a two-phase integrator:
+  BEND phase    — accumulate |Δratio| while Δratio < 0
+  REBOUND phase — accumulate  Δratio  while Δratio > 0
+  A tap fires when both phases cross their cumulative thresholds
+  within timeout windows.
+"""
+
+from __future__ import annotations
 
 import logging
-from collections import deque
 from dataclasses import dataclass
+from enum import Enum, auto
 from typing import Optional
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# Keypoint indices for index finger
-MCP_IDX = 5   # metacarpophalangeal (knuckle)
-PIP_IDX = 6   # proximal interphalangeal (middle joint)
+# Index-finger keypoints
+MCP_IDX = 5   # knuckle
+PIP_IDX = 6   # middle joint
 TIP_IDX = 8   # fingertip
+
+
+class _Phase(Enum):
+    IDLE = auto()
+    BENDING = auto()
+    REBOUNDING = auto()
 
 
 @dataclass
@@ -22,46 +43,47 @@ class TapEvent:
 
 @dataclass
 class TapResult:
-    """Output of one frame of tap analysis."""
-    event: Optional[TapEvent]  # tap detected this frame
-    suppress_cursor: bool       # cursor should be suppressed this frame
-    ratio: float                # current |TIP-MCP| / |PIP-MCP| (diagnostic)
-    dratio: float              # frame-to-frame ratio change (diagnostic)
+    event: Optional[TapEvent]
+    suppress_cursor: bool
+    ratio: float
+    dratio: float
 
 
 class AirTapDetector:
-    """Detects finger taps using index finger distance ratio.
+    """Integral tap detector with separate bend / rebound accumulation."""
 
-    ratio = |TIP - MCP| / |PIP - MCP|
-
-    When finger is straight: ratio ≈ 2.5–3.0
-    When PIP bends (tap):   ratio drops → Δratio negative
-    When finger rebounds:   ratio rises → Δratio positive
-
-    Tap = large negative Δratio pulse followed by large positive within rebound window.
-    Cursor suppression activates whenever |Δratio| exceeds suppress_threshold.
-    """
-
-    def __init__(self, tap_threshold: float = 0.5,
-                 suppress_threshold: float = 0.2,
-                 rebound_frames: int = 5,
-                 cooldown_frames: int = 8):
+    def __init__(
+        self,
+        *,
+        tap_threshold: float = 0.3,          # cumulative rebound sum to fire
+        min_bend: float = 0.15,              # minimum bend sum for a valid wind-up
+        suppress_threshold: float = 0.1,     # |Δratio| above which cursor is suppressed
+        bend_timeout: int = 12,              # max frames in BEND phase before reset
+        rebound_timeout: int = 8,            # max frames in REBOUND phase before reset
+        cooldown_frames: int = 8,            # frames to ignore after a tap
+    ):
         self.tap_threshold = tap_threshold
+        self.min_bend = min_bend
         self.suppress_threshold = suppress_threshold
-        self.rebound_frames = rebound_frames
+        self.bend_timeout = bend_timeout
+        self.rebound_timeout = rebound_timeout
         self.cooldown_frames = cooldown_frames
-        self._dratio_history: deque[float] = deque(maxlen=10)
-        self._prev_ratio: Optional[float] = None
+
+        self._phase = _Phase.IDLE
+        self._bend_sum = 0.0
+        self._rebound_sum = 0.0
+        self._phase_frames = 0
         self._tap_cooldown = 0
+        self._prev_ratio: Optional[float] = None
+
+    # ── public API ──────────────────────────────────────────────────────
 
     def update(self, landmarks: np.ndarray) -> TapResult:
-        """Process landmarks. Returns TapResult with event + suppression flag."""
         mcp = landmarks[MCP_IDX]
         pip = landmarks[PIP_IDX]
         tip = landmarks[TIP_IDX]
 
-        ratio = (np.linalg.norm(tip - mcp)
-                 / (np.linalg.norm(pip - mcp) + 1e-6))
+        ratio = np.linalg.norm(tip - mcp) / (np.linalg.norm(pip - mcp) + 1e-6)
 
         if self._prev_ratio is None:
             self._prev_ratio = ratio
@@ -70,22 +92,90 @@ class AirTapDetector:
 
         dratio = ratio - self._prev_ratio
         self._prev_ratio = ratio
-        self._dratio_history.append(dratio)
 
-        # Cursor suppression: any significant finger bending blocks movement
-        suppress = abs(dratio) > self.suppress_threshold
-
-        # Tap detection: negative pulse (bend) → positive pulse (rebound)
-        tap_event = None
         if self._tap_cooldown > 0:
             self._tap_cooldown -= 1
-        elif len(self._dratio_history) >= 3:
-            a_prev = self._dratio_history[-2]
-            a_curr = self._dratio_history[-1]
-            if a_prev < -self.tap_threshold and a_curr > self.tap_threshold:
-                self._tap_cooldown = self.cooldown_frames
-                logger.debug("Air tap detected (dratio: %.3f → %.3f)", a_prev, a_curr)
-                tap_event = TapEvent(timestamp=0.0)
+
+        suppress = abs(dratio) > self.suppress_threshold
+        tap_event = self._run_phase_machine(dratio)
 
         return TapResult(event=tap_event, suppress_cursor=suppress,
                          ratio=ratio, dratio=dratio)
+
+    # ── phase machine ───────────────────────────────────────────────────
+
+    def _run_phase_machine(self, dratio: float) -> Optional[TapEvent]:
+        if self._tap_cooldown > 0:
+            self._phase = _Phase.IDLE
+            return None
+
+        if self._phase == _Phase.IDLE:
+            return self._handle_idle(dratio)
+        elif self._phase == _Phase.BENDING:
+            return self._handle_bending(dratio)
+        else:
+            return self._handle_rebounding(dratio)
+
+    def _handle_idle(self, dratio: float) -> Optional[TapEvent]:
+        if dratio < -self.suppress_threshold:
+            self._phase = _Phase.BENDING
+            self._bend_sum = abs(dratio)
+            self._phase_frames = 1
+            logger.debug("点按: 进入BEND相 sum=%.3f", self._bend_sum)
+        return None
+
+    def _handle_bending(self, dratio: float) -> Optional[TapEvent]:
+        self._phase_frames += 1
+
+        # Timeout — abandoned wind-up
+        if self._phase_frames > self.bend_timeout:
+            logger.debug("点按: BEND超时 frames=%d sum=%.3f",
+                         self._phase_frames, self._bend_sum)
+            self._phase = _Phase.IDLE
+            return None
+
+        # Still bending — accumulate
+        if dratio <= 0:
+            self._bend_sum += abs(dratio)
+            return None
+
+        # Crossed zero → attempt transition to rebound
+        if self._bend_sum < self.min_bend:
+            logger.debug("点按: BEND太浅 sum=%.3f < min=%.2f",
+                         self._bend_sum, self.min_bend)
+            self._phase = _Phase.IDLE
+            return None
+
+        self._phase = _Phase.REBOUNDING
+        self._rebound_sum = dratio
+        self._phase_frames = 1
+        logger.debug("点按: 进入REBOUND相 bend_sum=%.3f", self._bend_sum)
+        return None
+
+    def _handle_rebounding(self, dratio: float) -> Optional[TapEvent]:
+        self._phase_frames += 1
+
+        # Timeout — rebound took too long
+        if self._phase_frames > self.rebound_timeout:
+            logger.debug("点按: REBOUND超时 frames=%d sum=%.3f thresh=%.2f",
+                         self._phase_frames, self._rebound_sum, self.tap_threshold)
+            self._phase = _Phase.IDLE
+            return None
+
+        # Dipped back negative — false alarm, discard
+        if dratio < -self.suppress_threshold:
+            logger.debug("点按: REBOUND回退 取消")
+            self._phase = _Phase.IDLE
+            return None
+
+        # Still rebounding — accumulate
+        if dratio >= 0:
+            self._rebound_sum += dratio
+            if self._rebound_sum >= self.tap_threshold:
+                logger.info("空中点按! bend=%.3f rebound=%.3f",
+                             self._bend_sum, self._rebound_sum)
+                self._phase = _Phase.IDLE
+                self._tap_cooldown = self.cooldown_frames
+                return TapEvent(timestamp=0.0)
+
+        return None

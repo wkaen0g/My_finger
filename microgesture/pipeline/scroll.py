@@ -13,8 +13,10 @@ logger = logging.getLogger(__name__)
 class ScrollDetector:
     """Detects two-finger scroll gesture from index+middle fingertip midpoint."""
 
-    def __init__(self, sensitivity: float = 40.0, beta: float = 0.007,
-                 fcmin: float = 1.0, min_cutoff: float = 1.0, fps: float = 30.0):
+    def __init__(self, screen_height: int = 1080, sensitivity: float = 40.0,
+                 beta: float = 0.007, fcmin: float = 1.0, min_cutoff: float = 1.0,
+                 fps: float = 30.0):
+        self._sh = screen_height
         self.sensitivity = sensitivity
         self._filter = OneEuroFilter(beta, fcmin, min_cutoff, fps)
         self._prev_y: Optional[float] = None
@@ -46,6 +48,6 @@ class ScrollDetector:
             return 0.0
 
         # y increases downward in image coords, scroll up = positive
-        dy = (self._prev_y - sy) * self.sensitivity * 1080
+        dy = (self._prev_y - sy) * self.sensitivity * self._sh
         self._prev_y = sy
         return dy
