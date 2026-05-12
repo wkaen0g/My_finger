@@ -1,0 +1,50 @@
+{
+    "camera": {
+        "device_id": 0,
+        "width": 640,
+        "height": 480,
+        "target_fps": 30
+    },
+    "mediapipe": {
+        "min_detection_confidence": 0.5,
+        "min_tracking_confidence": 0.5,
+        "max_num_hands": 1
+    },
+    "gesture": {
+        "tip_mcp_open_threshold": 0.25,
+        "tip_mcp_fist_threshold": 0.12,
+        "pinch_threshold_ratio": 0.35,
+        "tap_ratio_threshold": 0.5,
+        "tap_suppress_threshold": 0.2,
+        "tap_rebound_frames": 5,
+        "tap_cooldown_frames": 8
+    },
+    "cursor": {
+        "sensitivity": 0.6,
+        "deadzone": 0.003,
+        "smoothing_beta": 0.007,
+        "smoothing_fcmin": 1.0,
+        "smoothing_cutoff": 1.0
+    },
+    "scroll": {
+        "sensitivity": 40.0,
+        "smoothing_beta": 0.007,
+        "smoothing_fcmin": 1.0,
+        "smoothing_cutoff": 1.0
+    },
+    "system": {
+        "right_click_mode": "fist_tap",
+        "cursor_freeze_timeout": 2.0,
+        "no_hand_sleep_timeout": 5.0
+    },
+    "debug": {
+        "preview_window": true,
+        "show_landmarks": true
+    },
+    "logging": {
+        "level": "DEBUG",
+        "dir": "logs",
+        "max_bytes": 5242880,
+        "backup_count": 3
+    }
+}
