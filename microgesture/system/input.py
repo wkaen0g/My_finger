@@ -23,7 +23,11 @@ class InputController:
         """Move cursor by relative delta."""
         if dx == 0 and dy == 0:
             return
-        pyautogui.moveRel(int(round(dx)), int(round(dy)), _pause=False)
+        try:
+            pyautogui.moveRel(int(round(dx)), int(round(dy)), _pause=False)
+        except pyautogui.FailSafeException:
+            logger.warning("Failsafe triggered at (%d, %d)", *pyautogui.position())
+            raise
 
     def click(self) -> None:
         if self._dragging:

@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pyautogui
 
 from .config import get_config
 from .pipeline.air_tap import AirTapDetector, TapResult
@@ -273,8 +274,16 @@ class GesturePipeline:
 
     def _run_loop(self) -> None:
         while self._running:
-            if self._tracking:
-                self._process_frame()
+            try:
+                if self._tracking:
+                    self._process_frame()
+            except pyautogui.FailSafeException:
+                logger.warning("Failsafe triggered — cursor hit screen corner, freezing")
+                self.cursor.freeze()
+                self._tracking = False
+            except Exception:
+                logger.exception("Pipeline error, continuing")
+
             camera_ok = self.capture.is_connected
             if camera_ok != self._last_camera_ok:
                 self._last_camera_ok = camera_ok
