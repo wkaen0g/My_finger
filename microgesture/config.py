@@ -15,13 +15,16 @@ _DEFAULT_CONFIG = Path(__file__).parent / "config.json"
 class Config:
     """Thread-safe config holder with file-watch reload."""
 
-    def __init__(self, path: Path | None = None):
+    def __init__(self, path: Path | None = None, watch: bool = True):
         self._path = Path(path) if path else _DEFAULT_CONFIG
         self._lock = Lock()
         self._data: dict[str, Any] = {}
         self._stop_event = Event()
         self._observer = None
+        self._watch = watch
         self.reload()
+        if self._watch:
+            self._start_watch()
 
     def reload(self) -> None:
         try:
@@ -81,9 +84,15 @@ class Config:
 _config_instance: Config | None = None
 
 
-def get_config(path: Path | None = None) -> Config:
+def get_config(path: Path | None = None, watch: bool = True) -> Config:
     global _config_instance
-    if _config_instance is None:
-        _config_instance = Config(path)
-        _config_instance._start_watch()
+    new_path = Path(path) if path else _DEFAULT_CONFIG
+    if (
+        _config_instance is None
+        or _config_instance._path != new_path
+        or _config_instance._watch != watch
+    ):
+        if _config_instance is not None:
+            _config_instance._stop_watch()
+        _config_instance = Config(path, watch=watch)
     return _config_instance

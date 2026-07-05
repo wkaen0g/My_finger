@@ -639,6 +639,93 @@ shutdown(pipeline, tray) → None
 - [ ] 托盘切换右键模式 → 行为变更
 
 ### 短期 (Phase 2 预备)
-- 采集训练数据工具
-- MLP 分类器训练管道
-- ONNX 导出与推理封装
+- ~~采集训练数据工具~~ ✅ 2026-05-12
+- ~~MLP 分类器训练管道~~ ✅ 2026-05-12
+- ~~ONNX 导出与推理封装~~ ✅ 2026-05-12
+- [ ] 引导模式数据采集
+- [ ] HaGRID 预训练数据加载
+- [ ] 合成数据扩增 + 自采微调
+
+---
+
+## 2026-05-12 — Phase 2 分类器骨架搭建完成
+
+### 新增文件
+
+```
+microgesture/
+├── recognition/
+│   ├── __init__.py
+│   ├── base.py                    # GestureRecognizer 抽象基类
+│   └── static_classifier.py       # RuleEngine 适配器
+├── pipeline/
+│   └── classifier.py              # ONNX Runtime 推理
+├── training/
+│   ├── __init__.py
+│   ├── data_collector.py          # 自由模式数据采集
+│   ├── train_classifier.py         # MLP 训练管道 (PyTorch)
+│   └── export_onnx.py             # ONNX 导出
+```
+
+### 架构设计
+
+**GestureRecognizer 抽象基类** (`recognition/base.py`)
+- `predict(landmarks: 21×3) → RecognitionResult(label, confidence, features)`
+- `extract_features(landmarks) → 70-dim vector`
+  - 63 dim: raw landmarks 展平
+  - 7 dim: 5 指尖-MCP距离 + 1 捏合距离 + 1 食指弯曲比
+
+**StaticClassifier** (`recognition/static_classifier.py`)
+- 包装 Phase 1 RuleEngine，输出统一 `RecognitionResult`
+
+**ONNXClassifier** (`pipeline/classifier.py`)
+- ONNX Runtime 推理，输入 70-dim，输出 5 类 softmax
+- 标签顺序: FIST, NO_HAND, PALM_OPEN, PINCH, TWO_FINGER
+
+**训练管道** (`training/train_classifier.py`)
+- 3 层 MLP: 70→128→128→64→5, ReLU + Dropout(0.3)
+- CosineAnnealing 学习率调度
+- 8:2 训练/验证切分，取最佳 acc 保存
+
+**数据采集** (`training/data_collector.py`)
+- 自由模式: `start(label)` → 逐帧 `record(landmarks)` → `stop()`
+- 按标签分组保存为 `features_<label>.npz` + `metadata.json`
+
+### 影子模式 (main.py)
+
+```
+每帧:
+  rule_result = StaticClassifier.predict(landmarks)
+  gesture = Gesture[rule_result.label]
+
+  若 ONNX 模型存在:
+    onnx_result = ONNXClassifier.predict(landmarks)
+    若 onnx_result.confidence >= 0.90:
+      gesture = Gesture[onnx_result.label]   # 自动切换
+    否则:
+      gesture = Gesture[rule_result.label]   # 沿用规则
+```
+
+- 分类器置信度 ≥ 90% 自动覆盖规则引擎
+- 低于阈值时记录 `Shadow defer` 日志，用于分析差异
+- ONNX 模型不存在时降级为纯规则模式，行为与 Phase 1 一致
+
+### 新增依赖
+
+| 包 | 版本 | 用途 |
+|----|------|------|
+| torch | 2.11.0 | MLP 训练 |
+| onnxruntime | 1.26.0 | ONNX 推理 |
+
+### 新增配置项
+
+| 键 | 默认值 | 说明 |
+|----|--------|------|
+| `system.shadow_confidence_threshold` | 0.90 | 分类器接管阈值 |
+
+### 下一步
+
+1. 运行数据采集工具录制各手势样本
+2. 训练 MLP 分类器 → 导出 ONNX
+3. 影子模式自动化切换验证
+4. (后续) HaGRID 预训练数据加载 + 合成扩增

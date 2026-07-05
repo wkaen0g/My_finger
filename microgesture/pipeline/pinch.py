@@ -21,10 +21,12 @@ class PinchEvent:
 
 
 class PinchDetector:
-    """State machine for thumb-index pinch detection."""
+    """State machine for thumb-index pinch detection with hysteresis."""
 
-    def __init__(self, pinch_threshold_ratio: float = 0.35):
-        self.threshold_ratio = pinch_threshold_ratio
+    def __init__(self, pinch_threshold_ratio: float = 0.35,
+                 release_threshold_ratio: float = 0.55):
+        self.start_threshold = pinch_threshold_ratio     # norm < this → close
+        self.release_threshold = release_threshold_ratio  # norm > this → open
         self._state = PinchState.OPEN
         self._stable_count = 0
         self._stable_threshold = 3  # frames to confirm state change
@@ -43,27 +45,34 @@ class PinchDetector:
         hand_scale = np.linalg.norm(landmarks[0] - landmarks[9])
         normalized_dist = pinch_dist / hand_scale if hand_scale > 0 else 1.0
 
-        is_close = normalized_dist < self.threshold_ratio
-
-        if self._state == PinchState.OPEN and is_close:
-            self._stable_count += 1
-            if self._stable_count >= self._stable_threshold:
-                self._state = PinchState.PINCHING
+        if self._state == PinchState.OPEN:
+            # Start pinch: need norm below start_threshold (tighter)
+            is_close = normalized_dist < self.start_threshold
+            if is_close:
+                self._stable_count += 1
+                if self._stable_count >= self._stable_threshold:
+                    self._state = PinchState.PINCHING
+                    self._stable_count = 0
+                    logger.info("捏合开始 (norm=%.3f, start=%.2f)", normalized_dist, self.start_threshold)
+                    return PinchEvent(state=PinchState.PINCHING)
+            else:
                 self._stable_count = 0
-                logger.info("捏合开始 (norm=%.3f, thresh=%.2f)", normalized_dist, self.threshold_ratio)
-                return PinchEvent(state=PinchState.PINCHING)
-        elif self._state == PinchState.PINCHING and not is_close:
-            self._stable_count += 1
-            if self._stable_count >= self._stable_threshold:
-                self._state = PinchState.OPEN
-                self._stable_count = 0
-                logger.info("捏合释放 (norm=%.3f, thresh=%.2f)", normalized_dist, self.threshold_ratio)
-                return PinchEvent(state=PinchState.OPEN)
         else:
-            self._stable_count = 0
+            # Release pinch: need norm above release_threshold (wider gap)
+            is_open = normalized_dist > self.release_threshold
+            if is_open:
+                self._stable_count += 1
+                if self._stable_count >= self._stable_threshold:
+                    self._state = PinchState.OPEN
+                    self._stable_count = 0
+                    logger.info("捏合释放 (norm=%.3f, release=%.2f)", normalized_dist, self.release_threshold)
+                    return PinchEvent(state=PinchState.OPEN)
+            else:
+                self._stable_count = 0
 
         if self._frame % 5 == 0:
-            logger.debug("捏合参数: dist=%.3f scale=%.3f norm=%.3f 阈值=%.2f 状态=%s 计数=%d",
-                         pinch_dist, hand_scale, normalized_dist, self.threshold_ratio,
+            logger.debug("捏合参数: dist=%.3f scale=%.3f norm=%.3f 开始=%.2f 释放=%.2f 状态=%s 计数=%d",
+                         pinch_dist, hand_scale, normalized_dist,
+                         self.start_threshold, self.release_threshold,
                          self._state.name, self._stable_count)
         return None

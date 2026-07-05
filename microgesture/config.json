@@ -12,8 +12,9 @@
     },
     "gesture": {
         "tip_mcp_open_threshold": 0.25,
-        "tip_mcp_fist_threshold": 0.12,
-        "pinch_threshold_ratio": 0.35,
+        "tip_mcp_fist_threshold": 0.16,
+        "pinch_start_threshold": 0.35,
+        "pinch_release_threshold": 0.55,
         "tap_threshold": 0.3,
         "tap_min_bend": 0.15,
         "tap_suppress_threshold": 0.1,
@@ -37,7 +38,8 @@
     "system": {
         "right_click_mode": "fist_tap",
         "cursor_freeze_timeout": 2.0,
-        "no_hand_sleep_timeout": 5.0
+        "no_hand_sleep_timeout": 5.0,
+        "shadow_confidence_threshold": 0.90
     },
     "debug": {
         "preview_window": true,

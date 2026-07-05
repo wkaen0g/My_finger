@@ -1,5 +1,6 @@
 """Main entry point for the microgesture application."""
 
+import argparse
 import logging
 import logging.handlers
 import os
@@ -9,8 +10,10 @@ import threading
 import time
 from pathlib import Path
 
+import ctypes
+
 import numpy as np
-import pyautogui
+from PIL import Image, ImageDraw, ImageFont
 
 from .config import get_config
 from .pipeline.air_tap import AirTapDetector, TapResult
@@ -20,10 +23,38 @@ from .pipeline.detector import HandDetector
 from .pipeline.gesture_engine import Gesture, RuleEngine
 from .pipeline.pinch import PinchDetector
 from .pipeline.scroll import ScrollDetector
+from .recognition.base import GestureRecognizer
+from .recognition.static_classifier import StaticClassifier
 from .system.input import InputController
 from .system.tray import SystemTray, TrayCallbacks, TrayState
 
 logger = logging.getLogger(__name__)
+
+_GESTURE_CN = {
+    "PALM_OPEN": "张开",
+    "FIST": "握拳",
+    "TWO_FINGER": "双指",
+    "PINCH": "捏合",
+    "NO_HAND": "无手",
+}
+
+
+def _cjk_text(img: np.ndarray, text: str, xy, font_size: int,
+              color, anchor="lt") -> np.ndarray:
+    """Draw CJK text on BGR numpy image using PIL."""
+    import cv2
+
+    pil_img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(pil_img)
+    try:
+        font = ImageFont.truetype("simhei.ttf", font_size)
+    except OSError:
+        try:
+            font = ImageFont.truetype("msyh.ttc", font_size)
+        except OSError:
+            font = ImageFont.load_default()
+    draw.text(xy, text, font=font, fill=color[::-1], anchor=anchor)
+    return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
 
 def setup_logging(config) -> None:
@@ -49,12 +80,24 @@ def setup_logging(config) -> None:
     )
     fh.setLevel(level)
     fh.setFormatter(fmt)
-    root.addHandler(fh)
 
     ch = logging.StreamHandler()
     ch.setLevel(logging.WARNING)
     ch.setFormatter(fmt)
-    root.addHandler(ch)
+
+    has_file_handler = any(
+        isinstance(h, logging.handlers.RotatingFileHandler) and getattr(h, "baseFilename", None) == str(log_file)
+        for h in root.handlers
+    )
+    if not has_file_handler:
+        root.addHandler(fh)
+
+    has_stream_handler = any(
+        isinstance(h, logging.StreamHandler) and not isinstance(h, logging.handlers.RotatingFileHandler)
+        for h in root.handlers
+    )
+    if not has_stream_handler:
+        root.addHandler(ch)
 
 
 class GesturePipeline:
@@ -82,8 +125,23 @@ class GesturePipeline:
         self.engine = RuleEngine(
             tip_mcp_open_threshold=config.get("gesture", "tip_mcp_open_threshold", default=0.25),
             tip_mcp_fist_threshold=config.get("gesture", "tip_mcp_fist_threshold", default=0.12),
-            pinch_threshold_ratio=config.get("gesture", "pinch_threshold_ratio", default=0.35),
+            pinch_threshold_ratio=config.get("gesture", "pinch_start_threshold", default=0.35),
         )
+
+        # ── Phase 2: shadow-mode recognition ──────────────────────────
+        self._static_recognizer = StaticClassifier(self.engine)
+        self._onnx_recognizer: GestureRecognizer | None = None
+        self._shadow_threshold = config.get("system", "shadow_confidence_threshold", default=0.90)
+
+        onnx_path = Path(__file__).parent / "models" / "classifier.onnx"
+        if onnx_path.exists():
+            try:
+                from .pipeline.classifier import ONNXClassifier
+                self._onnx_recognizer = ONNXClassifier(onnx_path)
+                logger.info("Shadow mode: ONNX classifier loaded")
+            except Exception:
+                logger.warning("Shadow mode: ONNX load failed, using rules only")
+
         self.tap = AirTapDetector(
             tap_threshold=config.get("gesture", "tap_threshold", default=0.3),
             min_bend=config.get("gesture", "tap_min_bend", default=0.15),
@@ -94,10 +152,15 @@ class GesturePipeline:
         )
         self._tap_result: TapResult | None = None
         self.pinch = PinchDetector(
-            pinch_threshold_ratio=config.get("gesture", "pinch_threshold_ratio", default=0.35),
+            pinch_threshold_ratio=config.get("gesture", "pinch_start_threshold", default=0.35),
+            release_threshold_ratio=config.get("gesture", "pinch_release_threshold", default=0.55),
         )
-        import pyautogui
-        sw, sh = pyautogui.size()
+        try:
+            sw = ctypes.windll.user32.GetSystemMetrics(0)
+            sh = ctypes.windll.user32.GetSystemMetrics(1)
+        except Exception:
+            sw, sh = 1920, 1080
+            logger.info("Fallback screen dimensions used: %dx%d", sw, sh)
         self.cursor = CursorController(
             screen_width=sw, screen_height=sh,
             sensitivity=config.get("cursor", "sensitivity", default=0.6),
@@ -120,6 +183,7 @@ class GesturePipeline:
         self._right_click_mode = config.get("system", "right_click_mode", default="fist_tap")
         self._preview = config.get("debug", "preview_window", default=False)
         self._preview_frame_count = 0
+        self._shadow_frame = 0
 
     def _draw_preview(self, frame, hand, gesture) -> None:
         if not self._preview:
@@ -140,17 +204,17 @@ class GesturePipeline:
                 cv2.putText(display, str(i), (px + 4, py), cv2.FONT_HERSHEY_SIMPLEX,
                             0.3, (255, 255, 255), 1)
 
-            # Gesture label
+            # Gesture label (Chinese)
+            cn_label = _GESTURE_CN.get(gesture.name, gesture.name)
             color = (0, 255, 0)
-            if gesture.gesture == Gesture.FIST:
+            if gesture == Gesture.FIST:
                 color = (0, 0, 255)
-            elif gesture.gesture == Gesture.TWO_FINGER:
+            elif gesture == Gesture.TWO_FINGER:
                 color = (255, 0, 0)
-            elif gesture.gesture == Gesture.PINCH:
+            elif gesture == Gesture.PINCH:
                 color = (255, 255, 0)
-            label = f"{gesture.gesture.name} | drag={self.input_ctrl.is_dragging}"
-            cv2.putText(display, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.8, color, 2)
+            label = f"{cn_label} | 拖拽={'是' if self.input_ctrl.is_dragging else '否'}"
+            display = _cjk_text(display, label, (10, 30), 28, color)
 
             # Pinch distance
             thumb, idx = hand.landmarks[4], hand.landmarks[8]
@@ -181,8 +245,7 @@ class GesturePipeline:
                 cv2.putText(display, f"{n}={d:.3f}", (10, 80 + i * 16),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
         else:
-            cv2.putText(display, "NO HAND", (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.8, (0, 0, 255), 2)
+            display = _cjk_text(display, "无手", (10, 30), 32, (0, 0, 255))
 
         cv2.imshow("MicroGesture Preview", display)
         cv2.waitKey(1)
@@ -200,42 +263,60 @@ class GesturePipeline:
 
         self._no_hand_start = None
         self._tap_result = self.tap.update(hand.landmarks)
-        gesture = self.engine.classify(hand.landmarks)
+
+        # ── Phase 2: shadow recognition ───────────────────────────────
+        rule_result = self._static_recognizer.predict(hand.landmarks)
+        gesture = Gesture[rule_result.label]
+
+        # ONNX runs every 5 frames to avoid stutter
+        self._shadow_frame += 1
+        if self._onnx_recognizer is not None and self._shadow_frame % 5 == 0:
+            onnx_result = self._onnx_recognizer.predict(hand.landmarks)
+            if onnx_result.confidence >= self._shadow_threshold:
+                onnx_gesture = Gesture[onnx_result.label]
+                if onnx_gesture != gesture:
+                    logger.debug("Shadow override: rule=%s → onnx=%s (%.2f)",
+                                 gesture.name, onnx_gesture.name, onnx_result.confidence)
+                gesture = onnx_gesture
+            else:
+                logger.debug("Shadow defer: onnx=%s (%.2f) < %.2f, using rule=%s",
+                             onnx_result.label, onnx_result.confidence,
+                             self._shadow_threshold, gesture.name)
 
         # Handle gesture transitions
-        if gesture.gesture == Gesture.PALM_OPEN or gesture.gesture == Gesture.PINCH:
+        if gesture == Gesture.PALM_OPEN or gesture == Gesture.PINCH:
             self._fist_start = None
 
         # Dispatch by gesture
-        if gesture.gesture == Gesture.PALM_OPEN:
+        if gesture == Gesture.PALM_OPEN:
             self.cursor.unfreeze()
             self._handle_cursor_move(hand.landmarks)
             self._handle_tap()
             self._handle_pinch(hand.landmarks)
 
-        elif gesture.gesture == Gesture.FIST:
+        elif gesture == Gesture.FIST:
             self.cursor.freeze()
             if self._fist_start is None:
                 self._fist_start = time.time()
             if self._right_click_mode == "fist_tap":
                 self._handle_tap(right_click=True)
 
-        elif gesture.gesture == Gesture.TWO_FINGER:
+        elif gesture == Gesture.TWO_FINGER:
             self.cursor.freeze()
             self._handle_scroll(hand.landmarks)
             if self._right_click_mode == "two_finger":
                 self._handle_tap(right_click=True)
 
-        elif gesture.gesture == Gesture.PINCH:
+        elif gesture == Gesture.PINCH:
             self.cursor.unfreeze()
             self._handle_cursor_move(hand.landmarks)
             self._handle_pinch(hand.landmarks)
 
-        if self._prev_gesture == Gesture.TWO_FINGER and gesture.gesture != Gesture.TWO_FINGER:
+        if self._prev_gesture == Gesture.TWO_FINGER and gesture != Gesture.TWO_FINGER:
             self.scroll.stop()
 
         self._draw_preview(frame, hand, gesture)
-        self._prev_gesture = gesture.gesture
+        self._prev_gesture = gesture
 
     def _handle_no_hand(self) -> None:
         timeout = self.config.get("system", "no_hand_sleep_timeout", default=5.0)
@@ -284,10 +365,6 @@ class GesturePipeline:
             try:
                 if self._tracking:
                     self._process_frame()
-            except pyautogui.FailSafeException:
-                logger.warning("Failsafe triggered — cursor hit screen corner, freezing")
-                self.cursor.freeze()
-                self._tracking = False
             except Exception:
                 logger.exception("Pipeline error, continuing")
 
@@ -326,8 +403,16 @@ class GesturePipeline:
         logger.info("Gesture pipeline stopped")
 
 
-def main() -> None:
-    config = get_config()
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="MicroGesture hand gesture app")
+    parser.add_argument("--config", type=Path, help="Path to an alternate config file")
+    parser.add_argument("--no-watch", action="store_true", help="Disable config file watcher")
+    return parser.parse_args(argv)
+
+
+def main(argv=None) -> None:
+    args = parse_args(argv)
+    config = get_config(args.config, watch=not args.no_watch)
     setup_logging(config)
 
     logger.info("MicroGesture v0.1.0 starting")

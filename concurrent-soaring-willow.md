@@ -29,25 +29,25 @@
 
 ---
 
-## Phase 1: 规则引擎 MVP（目标：可用的手势控制系统）
+## Phase 1: 规则引擎 MVP（目标：可用的手势控制系统）✅ 已完成 2026-05-12
 
 ### 1.1 项目骨架搭建
-- [ ] 在 `D:\Myfinger\` 创建 `microgesture/` 包结构
-- [ ] `main.py` 入口：启动托盘、初始化管道、启动事件循环
-- [ ] `config.py` + `config.json`：配置加载与热重载（watchdog 监听文件变化）
-- [ ] 日志系统：`logging` 模块，分级(DEBUG/INFO/WARNING/ERROR)，输出到 `logs/microgesture.log`
-- [ ] 错误降级：摄像头丢失自动重连、无手检测超时休眠、模型加载失败告警
+- [x] 在 `D:\Myfinger\` 创建 `microgesture/` 包结构
+- [x] `main.py` 入口：启动托盘、初始化管道、启动事件循环
+- [x] `config.py` + `config.json`：配置加载与热重载（watchdog 监听文件变化）
+- [x] 日志系统：`logging` 模块，分级(DEBUG/INFO/WARNING/ERROR)，输出到 `logs/microgesture.log`
+- [x] 错误降级：摄像头丢失自动重连、无手检测超时休眠、模型加载失败告警
 
 ### 1.2 摄像头采集 (`pipeline/capture.py`)
-- [ ] OpenCV 摄像头采集，30fps 目标
-- [ ] 采集线程 + `collections.deque(maxlen=2)` 帧缓冲
-- [ ] 摄像头丢失自动重连（指数退避，最多5次）
+- [x] OpenCV 摄像头采集，30fps 目标
+- [x] 采集线程 + `collections.deque(maxlen=2)` 帧缓冲
+- [x] 摄像头丢失自动重连（指数退避，最多5次）
 
 ### 1.3 MediaPipe 推理 (`pipeline/detector.py`)
-- [ ] MediaPipe Hands 封装：输入帧 → 输出 21点归一化坐标
-- [ ] 置信度过滤（<0.5 丢弃帧）
-- [ ] 手选择：自动选最大/置信度最高的手，配置可指定左右手
-- [ ] 处理线程主循环：取帧→推理→手势引擎→系统事件
+- [x] MediaPipe Hands 封装：输入帧 → 输出 21点归一化坐标（使用 Tasks API，自动下载模型）
+- [x] 置信度过滤（<0.5 丢弃帧）
+- [x] 手选择：自动选最高置信度手
+- [x] 处理线程主循环：取帧→推理→手势引擎→系统事件
 
 ### 1.3.1 MediaPipe 手部关键点索引（21点）
 
@@ -81,90 +81,125 @@
         │ 17 ─ MCP
 ```
 
-**各模块使用的关键点：**
+**各模块使用的关键点（实际实现）：**
 
 | 模块 | 使用关键点 | 用途 |
 |------|-----------|------|
-| `cursor.py` | 食指 TIP(8) x,y | 光标位移 |
-| `air_tap.py` | 食指 TIP(8) z | 点按加速度检测 |
+| `cursor.py` | 食指 TIP(8) x,y | 光标位移（1€滤波 + 死区） |
+| `air_tap.py` | 食指 MCP(5)+PIP(6)+TIP(8) | 弯曲比积分式点按 + 光标抑制 |
 | `gesture_engine.py` | TIP(4,8,12,16,20) + MCP(2,5,9,13,17) | 指尖-MCP距离 → 伸/屈判定 |
-| `pinch.py` | 拇指 TIP(4) + 食指 TIP(8) + WRIST(0) + 中指 MCP(9) | 捏合距离归一化 |
+| `pinch.py` | 拇指 TIP(4) + 食指 TIP(8) + WRIST(0) + 中指 MCP(9) | 捏合距离归一化 + 滞后状态机 |
 | `scroll.py` | 食指 TIP(8) + 中指 TIP(12) | 双指中点 y 位移 |
 
 ### 1.4 规则引擎 (`pipeline/gesture_engine.py`)
-纯几何规则判断5个手势状态：
+纯几何规则判断5个手势状态（每5帧输出 DEBUG 日志）：
 
 | 手势 | 判定规则 |
 |------|---------|
-| 手掌张开 | 所有5指指尖-MCP距离 > 各自阈值 |
-| 握拳 | 所有5指指尖-MCP距离 < 各自阈值 |
-| 双指伸出 | 食指+中指指尖-MCP距离 > 阈值，其余 < 阈值 |
-| 捏合 | 拇指尖-食指尖归一化距离 < 自适应阈值（手腕-中指尖距离×比例） |
+| 手掌张开 | 所有5指指尖-MCP距离 > open_threshold(0.25) |
+| 握拳 | 所有5指指尖-MCP距离 < fist_threshold(0.16) |
+| 双指伸出 | 食指+中指指尖-MCP距离 > open_threshold，其余 < fist_threshold |
+| 捏合 | 拇指尖-食指尖归一化距离 < pinch_ratio(0.35) |
 | 无手 | MediaPipe 无检测或置信度<0.5 |
 
-### 1.5 空中点按检测 (`pipeline/air_tap.py`)
-- [ ] 食指TIP的z坐标二阶差分（加速度）
-- [ ] 自适应阈值：基于手腕-中指尖距离归一化
-- [ ] 回弹窗口：3-5帧内完成正加速→负加速脉冲才算有效点按
-- [ ] 输出：`tap` 事件（瞬态）
+### 1.5 空中点按检测 (`pipeline/air_tap.py`) — 已改为积分相位检测
+- [x] 信号源从 z 轴加速度改为**弯曲比**：`ratio = |TIP(8)-MCP(5)| / |PIP(6)-MCP(5)|`
+- [x] 双相积分状态机：BEND 相（累计\|Δratio\|）→ REBOUND 相（累计 Δratio）→ 达标触发
+- [x] BEND 超时 12 帧，REBOUND 超时 12 帧，冷却 8 帧
+- [x] 输出：`TapResult(event, suppress_cursor, ratio, dratio)`
+- [x] 光标抑制：\|Δratio\| > 0.1 时跳过光标移动
 
-### 1.6 捏合检测 (`pipeline/pinch.py`)
-- [ ] 拇指尖-食指尖归一化距离
-- [ ] 自适应阈值：距离 < 手腕到中指尖距离 × 配置比例
-- [ ] 状态机：`open` → `pinching` → `open`，输出状态变化事件
-- [ ] 捏合状态跟踪：用于拖拽（捏合+移动）
+### 1.6 捏合检测 (`pipeline/pinch.py`) — 已加滞后
+- [x] 拇指尖-食指尖归一化距离 / 手腕-中指MCP 距离
+- [x] 滞后状态机：start_threshold(0.35) → 捏合开始，release_threshold(0.55) → 释放
+- [x] 3帧去抖确认状态切换，防止振荡
+- [x] 捏合状态跟踪：用于拖拽（捏合+移动）
 
 ### 1.7 光标控制 (`pipeline/cursor.py`)
-- [ ] 1欧元滤波器平滑食指TIP坐标
-- [ ] 手掌张开态：指尖帧间位移 → 光标移动增量
-- [ ] 握拳态：冻结光标，不发送移动事件
-- [ ] 灵敏度缩放因子（配置可调）
+- [x] 1€滤波器平滑食指 TIP(8) 坐标
+- [x] 手掌张开/捏合：指尖帧间位移 → 光标移动增量
+- [x] 握拳/双指：冻结光标，不发送移动事件
+- [x] 死区过滤：位移 < deadzone × 屏幕宽度 → 忽略
+- [x] 灵敏度使用实际屏幕分辨率（非硬编码 1920×1080）
 
 ### 1.8 双指滚动 (`pipeline/scroll.py`)
-- [ ] 检测双指伸出状态
-- [ ] 两指尖(食指TIP+中指TIP)中点 y 轴位移 → 垂直滚动量
-- [ ] 1欧元滤波平滑滚动量
-- [ ] 输出：`scroll(delta)` 事件
+- [x] 检测双指伸出状态
+- [x] 两指尖(食指TIP+中指TIP)中点 y 轴位移 → 垂直滚动量
+- [x] 1€滤波平滑，使用实际屏幕高度
 
-### 1.9 系统事件模拟 (`system/input.py`)
-- [ ] 光标移动：PyAutoGUI `moveRel()` 或 PyWin32 `SetCursorPos`
-- [ ] 点击：`click()`, `doubleClick()`
-- [ ] 右键：`rightClick()`
-- [ ] 拖拽：`mouseDown()` → 移动 → `mouseUp()`
-- [ ] 滚动：`scroll()`
-- [ ] 所有事件模拟统一接口
+### 1.9 系统事件模拟 (`system/input.py`) — 已改为 Win32 原生 API
+- [x] 光标移动：Win32 `SetCursorPos`（替换 pyautogui `moveRel`）
+- [x] 点击/右键/拖拽/滚动：Win32 `mouse_event`
+- [x] 软钳制：光标触及屏幕边缘时钳住，不再抛异常
 
-### 1.10 系统托盘 (`system/tray.py`)
-- [ ] pystray 托盘图标与菜单
-- [ ] 菜单项：启停追踪、灵敏度调节(低/中/高)、右键模式切换、退出
-- [ ] 状态指示：图标颜色（绿=正常，黄=无摄像头，灰=休眠）
+### 1.10 系统托盘 (`system/tray.py`) — 已重构
+- [x] pystray 托盘图标与菜单
+- [x] 动态勾选标记：灵敏度(低/中/高)、右键模式、Tracking 状态
+- [x] 状态指示：图标颜色（绿=正常，黄=无摄像头，灰=休眠）
+- [x] 摄像头状态实时回调更新图标
 
 ---
 
-## Phase 2: 分类器替换规则引擎（目标：提升识别精度和鲁棒性）
+## Phase 2: 分类器替换规则引擎（目标：提升识别精度和鲁棒性）🔧 搭建中
 
-### 2.1 数据采集工具 (`training/data_collector.py`)
-- [ ] 引导式采集：屏幕指令提示做指定手势，自动录N帧+标签
-- [ ] 伪标签纠错：初版模型预测→人工修正错误帧
-- [ ] 输出标注数据格式：`(关键点63维, 标签)` 或 `(帧图, 标签)` 可选
+### 2.1 数据采集工具 (`training/data_collector.py`, `training/guided_collector.py`)
+- [x] 自由模式：指定手势标签 → 逐帧采集 70 维特征 + 标签 → .npz
+- [x] 引导式采集：全屏 PIL 中文指令覆盖，10 秒准备倒计时，自动录 500 帧/手势
+- [x] 进度显示：实时显示 `已录/目标` 帧数，超时保护 5000 迭代
+- [ ] 伪标签纠错（后续）
+- [x] 输出标注数据格式：`(70维特征向量, 标签)`
 
 ### 2.2 训练管道 (`training/train_classifier.py`, `training/export_onnx.py`)
-- [ ] HaGRID 预训练数据加载
-- [ ] MLP 分类器（3-4层，64-128单元/层，ReLU+Dropout）
-- [ ] 输入：手部特征向量（关键点坐标+指尖距离+关节角度）
-- [ ] 输出：5类（手掌张开/握拳/双指/捏合/无手）
-- [ ] 自采数据微调
-- [ ] 导出 ONNX 到 `microgesture/models/classifier.onnx`
+- [ ] HaGRID 预训练数据加载（待实现）
+- [x] MLP 分类器：70→128→128→64→5，ReLU+Dropout(0.3)，CosineAnnealing 调度
+- [x] 输入：70 维特征（63 坐标 + 5 指尖-MCP距离 + 1 捏合距离 + 1 弯曲比）
+- [x] 输出：5类（手掌张开/握拳/双指/捏合/无手）
+- [x] 自采数据训练：5 类 × 500 帧 = 2500 样本，验证准确率 **100%**
+- [x] 导出 ONNX 到 `microgesture/models/classifier.onnx`（验证通过）
 
 ### 2.3 分类器推理 (`pipeline/classifier.py`)
-- [ ] ONNX Runtime 推理封装
-- [ ] 输出类别+置信度
-- [ ] 影子模式：规则引擎和分类器并行跑，分类器置信度达标后自动切换
-- [ ] `GestureRecognizer` 抽象基类 (`recognition/base.py`)：`predict(features) → (label, confidence)`
+- [x] ONNX Runtime 推理封装
+- [x] 输出类别+置信度（Softmax）
+- [x] 影子模式：规则引擎和分类器并行跑，置信度 ≥ 90% 自动切换
+- [x] ONNX 每 5 帧推理一次（降低负载，避免卡顿）
+- [x] `GestureRecognizer` 抽象基类 (`recognition/base.py`)：`predict(landmarks) → RecognitionResult(label, confidence, features)`
 
 ### 2.4 规则引擎实现基类接口 (`recognition/static_classifier.py`)
-- [ ] 规则引擎和 ONNX 分类器都实现 `GestureRecognizer`
-- [ ] `gesture_engine.py` 通过工厂方法获取当前活跃的识别器
+- [x] StaticClassifier 包装 RuleEngine，实现 `GestureRecognizer`
+- [x] `gesture_engine.py` 通过影子模式工厂方法获取当前活跃的识别器
+
+### 2.5 新增依赖
+```
+torch>=2.0
+onnxruntime>=1.15
+onnxscript          (torch.onnx 导出依赖)
+```
+
+### 2.6 新增文件
+```
+microgesture/
+├── recognition/
+│   ├── base.py                    # GestureRecognizer 抽象基类 + extract_features(70维)
+│   └── static_classifier.py       # RuleEngine 适配器
+├── pipeline/
+│   └── classifier.py              # ONNX Runtime 推理 (ONNXClassifier)
+├── training/
+│   ├── data_collector.py          # 核心采集器
+│   ├── guided_collector.py        # 引导模式采集 (PIL中文 + 10s倒计时 + 500帧/手势)
+│   ├── train_classifier.py         # MLP 训练管道
+│   └── export_onnx.py             # 导出 ONNX
+├── models/
+│   ├── hand_landmarker.task        # MediaPipe 模型
+│   ├── best_model.pt               # PyTorch 最佳模型
+│   └── classifier.onnx             # ONNX 分类器
+└── training/data/
+    ├── features_PALM_OPEN.npz      # 500 样本
+    ├── features_FIST.npz            # 500 样本
+    ├── features_TWO_FINGER.npz      # 500 样本
+    ├── features_PINCH.npz           # 500 样本
+    ├── features_NO_HAND.npz         # 500 样本
+    └── metadata.json
+```
 
 ---
 

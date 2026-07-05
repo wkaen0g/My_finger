@@ -67,20 +67,7 @@ class RuleEngine:
             )
             logger.debug("指尖-MCP距离: %s | 伸=%d 屈=%d", parts, open_count, closed_count)
 
-        # Palm open: all 5 tips extended
-        if open_count == 5:
-            return GestureResult(Gesture.PALM_OPEN, landmarks, 1.0)
-
-        # Fist: all 5 tips curled
-        if closed_count == 5:
-            return GestureResult(Gesture.FIST, landmarks, 1.0)
-
-        # Two-finger: index + middle extended, ring + pinky curled
-        if (distances[1] > self.open_threshold and distances[2] > self.open_threshold
-                and distances[3] < self.fist_threshold and distances[4] < self.fist_threshold):
-            return GestureResult(Gesture.TWO_FINGER, landmarks, 1.0)
-
-        # Pinch: thumb tip close to index tip relative to hand size
+        # Pinch (check FIRST — most specific gesture, avoid TWO_FINGER stealing it)
         pinch_dist = np.linalg.norm(landmarks[THUMB_TIP] - landmarks[INDEX_TIP])
         hand_scale = np.linalg.norm(landmarks[WRIST] - landmarks[MIDDLE_MCP])
         pinch_norm = pinch_dist / hand_scale if hand_scale > 0 else 1.0
@@ -90,7 +77,23 @@ class RuleEngine:
         if pinch_norm < self.pinch_ratio:
             return GestureResult(Gesture.PINCH, landmarks, 1.0)
 
-        # Default to nearest match or palm_open as safe fallback
+        # Fist: majority voting — 4+ fingers curled
+        if closed_count >= 4:
+            return GestureResult(Gesture.FIST, landmarks, 0.9)
+
+        # Two-finger: index+middle stretched, ring+pinky curled
+        idx_open = distances[1] > self.fist_threshold
+        mid_open = distances[2] > self.fist_threshold
+        ring_closed = distances[3] < self.fist_threshold
+        pinky_closed = distances[4] < self.fist_threshold
+        if idx_open and mid_open and ring_closed and pinky_closed:
+            return GestureResult(Gesture.TWO_FINGER, landmarks, 0.9)
+
+        # Palm open: majority voting — 3+ fingers extended
+        if open_count >= 3:
+            return GestureResult(Gesture.PALM_OPEN, landmarks, 0.7)
+
+        # Unclear posture — default to palm_open for cursor tracking
         if self._frame % 5 == 0:
-            logger.debug("手势判定: PALM_OPEN (fallback, conf=0.5)")
-        return GestureResult(Gesture.PALM_OPEN, landmarks, 0.5)
+            logger.debug("手势判定: PALM_OPEN (fallback, conf=0.3)")
+        return GestureResult(Gesture.PALM_OPEN, landmarks, 0.3)
