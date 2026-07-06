@@ -67,19 +67,24 @@ class RuleEngine:
             )
             logger.debug("指尖-MCP距离: %s | 伸=%d 屈=%d", parts, open_count, closed_count)
 
-        # Pinch (check FIRST — most specific gesture, avoid TWO_FINGER stealing it)
+        # Fist: check FIRST — most distinctive (all fingers curled).
+        # Must precede PINCH because a fist has thumb close to index,
+        # which would otherwise trigger the pinch threshold.
+        if closed_count >= 4:
+            return GestureResult(Gesture.FIST, landmarks, 0.9)
+
+        # Pinch: thumb and index tips are close together
         pinch_dist = np.linalg.norm(landmarks[THUMB_TIP] - landmarks[INDEX_TIP])
         hand_scale = np.linalg.norm(landmarks[WRIST] - landmarks[MIDDLE_MCP])
         pinch_norm = pinch_dist / hand_scale if hand_scale > 0 else 1.0
         if self._frame % 5 == 0:
             logger.debug("捏合: dist=%.3f scale=%.3f norm=%.3f thresh=%.2f",
                          pinch_dist, hand_scale, pinch_norm, self.pinch_ratio)
-        if pinch_norm < self.pinch_ratio:
+        # PINCH requires: tips close AND index finger NOT fully extended.
+        # The "not extended" guard prevents a TWO_FINGER (peace sign) with
+        # thumb curled nearby from being mis-classified as pinch.
+        if pinch_norm < self.pinch_ratio and not (distances[1] > self.open_threshold):
             return GestureResult(Gesture.PINCH, landmarks, 1.0)
-
-        # Fist: majority voting — 4+ fingers curled
-        if closed_count >= 4:
-            return GestureResult(Gesture.FIST, landmarks, 0.9)
 
         # Two-finger: index+middle stretched, ring+pinky curled
         idx_open = distances[1] > self.fist_threshold
