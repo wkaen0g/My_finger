@@ -57,14 +57,15 @@ def _cjk_text(img: np.ndarray, text: str, xy, font_size: int,
     return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
 
-def setup_logging(config) -> None:
+def setup_logging(config, debug: bool = False) -> None:
     log_dir = Path(config.get("logging", "dir", default="logs"))
     if not log_dir.is_absolute():
         log_dir = Path(__file__).parent / log_dir
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "microgesture.log"
 
-    level = getattr(logging, config.get("logging", "level", default="INFO"), logging.INFO)
+    level_name = "DEBUG" if debug else config.get("logging", "level", default="INFO")
+    level = getattr(logging, level_name, logging.INFO)
     max_bytes = config.get("logging", "max_bytes", default=5_242_880)
     backup_count = config.get("logging", "backup_count", default=3)
 
@@ -505,13 +506,14 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="MicroGesture hand gesture app")
     parser.add_argument("--config", type=Path, help="Path to an alternate config file")
     parser.add_argument("--no-watch", action="store_true", help="Disable config file watcher")
+    parser.add_argument("--debug", action="store_true", help="Enable DEBUG-level logging")
     return parser.parse_args(argv)
 
 
 def main(argv=None) -> None:
     args = parse_args(argv)
     config = get_config(args.config, watch=not args.no_watch)
-    setup_logging(config)
+    setup_logging(config, debug=args.debug)
 
     logger.info("MicroGesture v0.1.0 starting")
 

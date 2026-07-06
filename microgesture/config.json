@@ -46,7 +46,7 @@
         "show_landmarks": true
     },
     "logging": {
-        "level": "DEBUG",
+        "level": "INFO",
         "dir": "logs",
         "max_bytes": 5242880,
         "backup_count": 3
