@@ -1,11 +1,14 @@
-"""Unified HaGRID data preparation CLI.
+"""Unified data preparation CLI (HaGRID + 20BN-Jester V1).
 
 Usage:
-  # Download from HuggingFace and extract features (automated, ~10 GB)
+  # Download HaGRID from HuggingFace and extract features (automated, ~10 GB)
   python -m microgesture.training.hagrid download [--max-per-class 5000]
 
   # Process locally-downloaded HaGRID images (offline mode)
   python -m microgesture.training.hagrid process [--raw-dir hagrid_raw/] [--max-per-class 2000]
+
+  # Process 20BN-Jester V1 frames with pseudo-labeling
+  python -m microgesture.training.hagrid jester [--frames-dir ...] [--max-per-class 5000]
 """
 
 from __future__ import annotations
@@ -59,6 +62,34 @@ def main(argv: list[str] | None = None) -> int:
         help="Minimum MediaPipe detection confidence (default: 0.7)",
     )
 
+    # ── jester ────────────────────────────────────────────────────────────
+    jester = sub.add_parser("jester", help="Process 20BN-Jester V1 frames with pseudo-labeling")
+    jester.add_argument(
+        "--frames-dir", default=None,
+        help="Directory containing Jester video-id subdirectories with .jpg frames "
+             "(default: D:/20BN-Jester V1/downloads/20bn-jester-v1/)",
+    )
+    jester.add_argument(
+        "--output-dir", default=None,
+        help="Directory for output .npz files (default: <training_pkg>/data_jester/)",
+    )
+    jester.add_argument(
+        "--max-per-class", type=int, default=5000,
+        help="Max samples per gesture class (default: 5000)",
+    )
+    jester.add_argument(
+        "--confidence-min", type=float, default=0.7,
+        help="Minimum MediaPipe hand detection confidence (default: 0.7)",
+    )
+    jester.add_argument(
+        "--frames-per-video", type=int, default=3,
+        help="Frames to sample per Jester video (default: 3)",
+    )
+    jester.add_argument(
+        "--pseudo-confidence-min", type=float, default=0.5,
+        help="Minimum pseudo-label confidence to accept (default: 0.5)",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -97,6 +128,20 @@ def main(argv: list[str] | None = None) -> int:
         )
         dest = args.output_dir or "(default)"
         print(f"\nProcessing complete: {total} samples saved to {dest}")
+
+    elif args.command == "jester":
+        from microgesture.training.jester_loader import process_jester
+
+        total = process_jester(
+            frames_dir=args.frames_dir,
+            out_dir=args.output_dir,
+            max_per_class=args.max_per_class,
+            confidence_min=args.confidence_min,
+            frames_per_video=args.frames_per_video,
+            pseudo_confidence_min=args.pseudo_confidence_min,
+        )
+        dest = args.output_dir or "(default)"
+        print(f"\nJester processing complete: {total} samples saved to {dest}")
 
     return 0 if total > 0 else 1
 
