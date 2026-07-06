@@ -50,5 +50,14 @@
         "dir": "logs",
         "max_bytes": 5242880,
         "backup_count": 3
+    },
+    "dtw": {
+        "arm_frames": 10,
+        "max_record_frames": 120,
+        "min_record_frames": 15,
+        "dtw_radius": 10,
+        "match_threshold": 8.0,
+        "cooldown_frames": 90,
+        "templates_path": "templates.json"
     }
 }

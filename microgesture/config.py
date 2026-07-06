@@ -80,6 +80,43 @@ class Config:
         with self._lock:
             return self._data[key]
 
+    def set(self, *keys: str, value: Any) -> None:
+        """Thread-safe nested setter. Creates intermediate dicts as needed."""
+        with self._lock:
+            node = self._data
+            for k in keys[:-1]:
+                if k not in node or not isinstance(node[k], dict):
+                    node[k] = {}
+                node = node[k]
+            node[keys[-1]] = value
+
+    def save(self) -> None:
+        """Persist current config atomically to the JSON file."""
+        import tempfile
+
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            dir=str(self._path.parent), prefix=".config_", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                with self._lock:
+                    json.dump(self._data, f, indent=2, ensure_ascii=False)
+            os.replace(tmp_path, str(self._path))
+            logger.info("Config saved to %s", self._path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+
+    def as_dict(self) -> dict:
+        """Return a deep copy of all config data."""
+        import copy
+
+        with self._lock:
+            return copy.deepcopy(self._data)
+
 
 _config_instance: Config | None = None
 

@@ -185,6 +185,25 @@ class GesturePipeline:
         self._preview_frame_count = 0
         self._shadow_frame = 0
 
+        # ── Phase 3: DTW custom gesture matching ───────────────────────
+        self._dtw_matcher = None
+        self._dtw_trainer = None
+        self._trainer_requested = False
+        self._trainer_label = ""
+        self._trainer_action: dict = {}
+        self._trainer_take = 0
+        self._dtw_cooldown = 0
+        self._dtw_status: str = ""
+        try:
+            from .recognition.dtw_matcher import DtwMatcher
+            from .recognition.dtw_trainer import DtwTrainer
+            self._dtw_matcher = DtwMatcher(config)
+            self._dtw_trainer = DtwTrainer(config)
+            logger.info("DTW gesture matcher loaded (%d templates)",
+                        self._dtw_matcher.template_count)
+        except Exception:
+            logger.warning("DTW matcher not available (fastdtw missing?)", exc_info=True)
+
     def _draw_preview(self, frame, hand, gesture) -> None:
         if not self._preview:
             return
@@ -244,6 +263,17 @@ class GesturePipeline:
                 d = np.linalg.norm(hand.landmarks[t] - hand.landmarks[m])
                 cv2.putText(display, f"{n}={d:.3f}", (10, 80 + i * 16),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+
+            # DTW state overlay
+            if self._dtw_matcher is not None:
+                state_name = self._dtw_matcher.state.name
+                status = self._dtw_status if self._dtw_status else state_name
+                display = _cjk_text(display, f"DTW: {status}", (w - 10, 10), 18,
+                                    (0, 255, 255), anchor="ra")
+                if self._dtw_matcher.template_count > 0:
+                    cv2.putText(display, f"{self._dtw_matcher.template_count} templates",
+                                (w - 10, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.4,
+                                (200, 200, 100), 1)
         else:
             display = _cjk_text(display, "无手", (10, 30), 32, (0, 0, 255))
 
@@ -286,6 +316,37 @@ class GesturePipeline:
         # Handle gesture transitions
         if gesture == Gesture.PALM_OPEN or gesture == Gesture.PINCH:
             self._fist_start = None
+
+        # ── Phase 3: DTW training mode ──────────────────────────────────
+        if self._trainer_requested and self._dtw_trainer is not None:
+            take_num = self._dtw_trainer.feed(hand.landmarks, gesture)
+            if take_num is not None:
+                self._trainer_take = take_num
+                self._dtw_status = f"训练: 第{take_num}/3次"
+                logger.info("DTW training: take %d/3 recorded", take_num)
+                if take_num >= 3:
+                    result = self._dtw_trainer.finish()
+                    if result and self._dtw_matcher:
+                        self._dtw_matcher.add_template(
+                            result.name, result.label, result.sequence,
+                            self._trainer_action,
+                        )
+                        self._dtw_status = f"已注册: {result.label}"
+                        logger.info("DTW template registered: %s (action=%s)",
+                                    result.name, self._trainer_action)
+                    self._trainer_requested = False
+            self._draw_preview(frame, hand, gesture)
+            return
+
+        # ── Phase 3: DTW matching (parallel path, before normal dispatch) ──
+        dtw_match = None
+        if self._dtw_matcher is not None:
+            dtw_match = self._dtw_matcher.feed(hand.landmarks, gesture)
+            if dtw_match is not None:
+                self._dtw_status = f"匹配: {dtw_match.label} ({dtw_match.confidence:.0%})"
+                logger.info("DTW match: %s (dist=%.2f conf=%.2f)",
+                            dtw_match.name, dtw_match.distance, dtw_match.confidence)
+                self._execute_dtw_action(dtw_match)
 
         # Dispatch by gesture
         if gesture == Gesture.PALM_OPEN:
@@ -352,6 +413,43 @@ class GesturePipeline:
                 self.input_ctrl.drag_start()
             else:
                 self.input_ctrl.drag_end()
+
+    def _execute_dtw_action(self, match) -> None:
+        """Execute the action configured for a matched DTW gesture."""
+        action = getattr(match, "action_config", {})
+        atype = action.get("type", "key_combo")
+        if atype == "key_combo":
+            modifiers = action.get("modifiers", [])
+            key = action.get("key")
+            if key:
+                self.input_ctrl.key_combo(modifiers, key)
+                logger.info("DTW action: %s+%s", "+".join(modifiers + [key]) if modifiers else key)
+        self._dtw_cooldown = self.config.get("dtw", "cooldown_frames", default=90)
+
+    def handle_register_gesture(self, name: str = "", label: str = "",
+                                 action_config: dict | None = None) -> None:
+        """Initiate gesture registration. Called from tray callback."""
+        if self._dtw_trainer is None:
+            logger.warning("DTW trainer not available")
+            return
+        if self._trainer_requested:
+            logger.warning("Training already in progress")
+            return
+        if action_config is None:
+            action_config = {"type": "key_combo", "modifiers": ["ctrl"], "key": ""}
+        if not name:
+            import time
+            name = f"gesture_{time.strftime('%Y%m%d_%H%M%S')}"
+        if not label:
+            label = name
+        self._trainer_requested = True
+        self._trainer_label = label
+        self._trainer_action = action_config
+        self._trainer_take = 0
+        self._dtw_status = "训练: 握拳开始录制..."
+        self._dtw_trainer.start(name, label)
+        logger.info("DTW training started: name=%s label=%s action=%s",
+                    name, label, action_config)
 
     def _handle_scroll(self, landmarks) -> None:
         if self._prev_gesture != Gesture.TWO_FINGER:
@@ -424,6 +522,7 @@ def main(argv=None) -> None:
         set_sensitivity=pipeline.set_sensitivity,
         set_right_click=pipeline.set_right_click,
         quit_app=lambda: shutdown(pipeline, tray),
+        register_gesture=lambda: pipeline.handle_register_gesture(),
     ))
 
     pipeline._on_status_change = lambda c: tray.set_state(
