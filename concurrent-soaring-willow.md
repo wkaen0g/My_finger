@@ -150,12 +150,16 @@
 - [x] 输出标注数据格式：`(70维特征向量, 标签)`
 
 ### 2.2 训练管道 (`training/train_classifier.py`, `training/export_onnx.py`)
-- [ ] HaGRID 预训练数据加载（待实现）
+- [x] HaGRID 预训练数据加载（`hagrid_loader.py` 本地图像 + `hagrid_download.py` HuggingFace 下载）
+- [x] 20BN-Jester V1 伪标签预训练数据加载（`jester_loader.py`，规则引擎自动标注）
+- [x] 共享模块 `_hagrid_common.py`：统一 CLASS_MAP / GESTURE_LABELS / 路径解析 / 特征保存
+- [x] 统一 CLI `hagrid.py`：`download` / `process` / `jester` 三个子命令
 - [x] MLP 分类器：70→128→128→64→5，ReLU+Dropout(0.3)，CosineAnnealing 调度
 - [x] 输入：70 维特征（63 坐标 + 5 指尖-MCP距离 + 1 捏合距离 + 1 弯曲比）
 - [x] 输出：5类（手掌张开/握拳/双指/捏合/无手）
 - [x] 自采数据训练：5 类 × 500 帧 = 2500 样本，验证准确率 **100%**
 - [x] 导出 ONNX 到 `microgesture/models/classifier.onnx`（验证通过）
+- [x] `train_with_pretrain()` 两阶段训练：预训练数据集 → 自采数据微调
 
 ### 2.3 分类器推理 (`pipeline/classifier.py`)
 - [x] ONNX Runtime 推理封装
@@ -184,10 +188,16 @@ microgesture/
 ├── pipeline/
 │   └── classifier.py              # ONNX Runtime 推理 (ONNXClassifier)
 ├── training/
+│   ├── __init__.py
+│   ├── _hagrid_common.py           # 共享常量/标签/工具（单一事实来源）
 │   ├── data_collector.py          # 核心采集器
 │   ├── guided_collector.py        # 引导模式采集 (PIL中文 + 10s倒计时 + 500帧/手势)
-│   ├── train_classifier.py         # MLP 训练管道
-│   └── export_onnx.py             # 导出 ONNX
+│   ├── train_classifier.py         # MLP 训练管道 (含两阶段训练)
+│   ├── export_onnx.py             # 导出 ONNX
+│   ├── hagrid_loader.py            # HaGRID 本地图像特征提取
+│   ├── hagrid_download.py          # HaGRID HuggingFace 下载
+│   ├── jester_loader.py            # 20BN-Jester V1 伪标签加载
+│   └── hagrid.py                   # 统一 CLI (download/process/jester)
 ├── models/
 │   ├── hand_landmarker.task        # MediaPipe 模型
 │   ├── best_model.pt               # PyTorch 最佳模型

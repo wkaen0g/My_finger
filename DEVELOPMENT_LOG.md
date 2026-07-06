@@ -642,9 +642,10 @@ shutdown(pipeline, tray) → None
 - ~~采集训练数据工具~~ ✅ 2026-05-12
 - ~~MLP 分类器训练管道~~ ✅ 2026-05-12
 - ~~ONNX 导出与推理封装~~ ✅ 2026-05-12
-- [ ] 引导模式数据采集
-- [ ] HaGRID 预训练数据加载
-- [ ] 合成数据扩增 + 自采微调
+- [x] 引导模式数据采集 ✅ 2026-07-04
+- [x] HaGRID 预训练数据加载 ✅ 2026-07-05
+- [x] 20BN-Jester V1 伪标签预训练 ✅ 2026-07-06
+- [ ] 合成数据扩增
 
 ---
 
@@ -729,3 +730,88 @@ microgesture/
 2. 训练 MLP 分类器 → 导出 ONNX
 3. 影子模式自动化切换验证
 4. (后续) HaGRID 预训练数据加载 + 合成扩增
+
+---
+
+## 2026-07-05 — Phase 2 训练数据管道完善
+
+### HaGRID 预训练数据加载
+
+修复了已有的 HaGRID loader 雏形，统一了架构：
+
+**新建 `_hagrid_common.py` — 单一事实来源**
+- `CLASS_MAP` — HaGRID 类名 → 规范手势标签
+- `GESTURE_LABELS` — 有序元组: FIST=0, NO_HAND=1, PALM_OPEN=2, PINCH=3, TWO_FINGER=4
+  - `train_classifier.py`, `classifier.py`, `export_onnx.py` 全部导入此元组
+  - 消除了 3 处硬编码重复
+- `get_output_dir()` / `get_raw_dir()` — 基于 `__file__` 的绝对路径，不再依赖 CWD
+- `save_features_by_label()` — 统一 .npz 保存逻辑
+
+**修复 `hagrid_download.py`**
+- 🔴 `import cv2` 从 `__main__` 守卫移到模块顶部（修复模块导入崩溃）
+- 标签映射改用 `_hagrid_common` 导入
+
+**修复 `hagrid_loader.py`**
+- 路径改为包相对路径 + tqdm 进度条 + argparse CLI
+
+**删除 `download.py`** — 损坏文件 (内容为 "404: Not Found")
+
+**新建 `hagrid.py` — 统一 CLI**
+```bash
+python -m microgesture.training.hagrid download   # HuggingFace 下载
+python -m microgesture.training.hagrid process    # 本地图像处理
+python -m microgesture.training.hagrid jester     # Jester 伪标签
+```
+
+### 标签一致性修复
+
+| 文件 | 修改 |
+|------|------|
+| `train_classifier.py` | `_GESTURES` → `from ._hagrid_common import GESTURE_LABELS` |
+| `classifier.py` | `_LABELS` → `from ..training._hagrid_common import GESTURE_LABELS` |
+
+---
+
+## 2026-07-06 — 20BN-Jester V1 伪标签数据加载
+
+### 背景
+
+改用 20BN-Jester V1 (替代 HaGRID) 作为预训练数据集。Jester 有 148K 视频 (每个 ~36 帧 JPG)，标签为 27 类动态手势，无法直接映射到我们的 5 类静态手形分类。
+
+### 策略
+
+**伪标签法**: 规则引擎 (RuleEngine) 对每帧自动标注：
+
+```
+Jester 帧 → MediaPipe Hands → RuleEngine.classify() → 伪标签
+  → 滤除低置信度 (conf < 0.5)
+  → extract_features() → 70 维特征
+  → 按标签分组 → data_jester/features_{LABEL}.npz
+```
+
+### 新建 `jester_loader.py`
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `frames_per_video` | 3 | 每视频采样帧数 |
+| `max_per_class` | 5000 | 每类上限，满后提前终止 |
+| `pseudo_confidence_min` | 0.5 | 伪标签最低置信度 |
+
+### 实测 (356 视频, 1068 帧)
+
+| 手势 | 样本数 |
+|------|--------|
+| FIST | 50 |
+| PALM_OPEN | 50 |
+| PINCH | 50 |
+| TWO_FINGER | 50 |
+
+- 处理速度: ~17.5 vid/s; 预计 34 min 可收集 20K 样本 (5000×4)
+- 输出与 `train_classifier.load_data()` 完全兼容
+
+### 下一步
+
+1. 运行 `python -m microgesture.training.hagrid jester` 生成完整 Jester 预训练数据
+2. 运行 `train_with_pretrain()` 两阶段训练: Jester 预训练 → 自采数据微调
+3. 对比微调前后分类器在真实摄像头下的表现
+4. Phase 3: DTW 自定义手势匹配器
