@@ -177,6 +177,7 @@ class GesturePipeline:
         self.scroll = ScrollDetector(
             screen_height=sh,
             sensitivity=config.get("scroll", "sensitivity", default=40.0),
+            deadzone=config.get("scroll", "deadzone", default=0.01),
             beta=config.get("scroll", "smoothing_beta", default=0.007),
             fcmin=config.get("scroll", "smoothing_fcmin", default=1.0),
             min_cutoff=config.get("scroll", "smoothing_cutoff", default=1.0),
