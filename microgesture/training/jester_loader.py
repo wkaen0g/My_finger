@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 JESTER_FRAMES_DIR = Path("D:/20BN-Jester V1/downloads/20bn-jester-v1")
 FRAMES_PER_VIDEO = 3          # frames sampled per video
-PSEUDO_CONFIDENCE_MIN = 0.5   # skip pseudo-labels below this confidence
+PSEUDO_CONFIDENCE_MIN = 0.7   # skip pseudo-labels below this confidence
 
 # Gesture enum → canonical label string (subset used for pseudo-labeling)
 _GESTURE_ENUM_TO_LABEL = {
@@ -130,10 +130,13 @@ def process_jester(
     )
     rule_engine = RuleEngine()
 
-    # Per-label feature buffers (only the 4 hand-shape classes; NO_HAND excluded)
-    target_labels = ["PALM_OPEN", "FIST", "TWO_FINGER", "PINCH"]
+    # Per-label feature buffers (all 5 gesture classes, including NO_HAND)
+    target_labels = ["PALM_OPEN", "FIST", "TWO_FINGER", "PINCH", "NO_HAND"]
     features_by_label: dict[str, list[np.ndarray]] = {l: [] for l in target_labels}
     class_full: dict[str, bool] = {l: False for l in target_labels}
+
+    # Pre-allocated zero landmarks for NO_HAND frames (avoids repeated allocation)
+    _ZERO_LANDMARKS = np.zeros((21, 3), dtype=np.float32)
 
     total_processed = 0
     total_detected = 0
@@ -162,6 +165,13 @@ def process_jester(
             # MediaPipe detection
             hand = detector.detect(frame)
             if hand is None:
+                # No hand detected → record as NO_HAND
+                if not class_full["NO_HAND"]:
+                    feat = extract_features(_ZERO_LANDMARKS)
+                    features_by_label["NO_HAND"].append(feat)
+                    if len(features_by_label["NO_HAND"]) >= max_per_class:
+                        class_full["NO_HAND"] = True
+                        logger.info("✓ NO_HAND: reached %d samples (max)", len(features_by_label["NO_HAND"]))
                 continue
 
             total_detected += 1
@@ -170,7 +180,7 @@ def process_jester(
             result = rule_engine.classify(hand.landmarks)
             label = _GESTURE_ENUM_TO_LABEL.get(result.gesture)
             if label is None:
-                continue  # NO_HAND or unknown — skip
+                continue  # unknown gesture — skip
 
             # Filter low-confidence pseudo-labels (fallback PALM_OPEN has conf=0.3)
             if result.confidence < pseudo_confidence_min:

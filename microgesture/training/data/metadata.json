@@ -1,7 +1,9 @@
 {
-  "PALM_OPEN": 0,
-  "FIST": 0,
-  "TWO_FINGER": 0,
-  "PINCH": 0,
-  "NO_HAND": 500
+  "PALM_OPEN": 500,
+  "FIST": 500,
+  "TWO_FINGER": 500,
+  "PINCH": 500,
+  "NO_HAND": 500,
+  "source": "guided_collector",
+  "date": "2026-07-04"
 }
