@@ -30,7 +30,7 @@
         "smoothing_cutoff": 1.0
     },
     "scroll": {
-        "sensitivity": 8.0,
+        "sensitivity": 3.0,
         "smoothing_beta": 0.007,
         "smoothing_fcmin": 1.0,
         "smoothing_cutoff": 1.0
