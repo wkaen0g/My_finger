@@ -308,12 +308,14 @@ class GesturePipeline:
         self._shadow_frame += 1
         model_source = "rule"
         onnx_conf = 0.0
+        onnx_agreed = True
         if self._onnx_recognizer is not None:
             onnx_result = self._onnx_recognizer.predict(hand.landmarks)
             onnx_conf = onnx_result.confidence
             if onnx_result.confidence >= self._shadow_threshold:
+                model_source = "onnx"
                 if Gesture[onnx_result.label] != gesture:
-                    model_source = "onnx"
+                    onnx_agreed = False
                 gesture = Gesture[onnx_result.label]
 
         # ── Periodic model inference summary (every 150 frames ≈ 5s) ──
@@ -324,11 +326,8 @@ class GesturePipeline:
             ]
             if self._onnx_recognizer is not None:
                 parts.append(f"onnx_conf={onnx_conf:.2f}")
-                rule_matches = (model_source == "rule") or (
-                    Gesture[rule_result.label] == gesture
-                )
-                if not rule_matches:
-                    parts.append(f"rule={rule_result.label}")
+                if not onnx_agreed:
+                    parts.append(f"rule_said={rule_result.label}")
             logger.debug("Inference: %s", " | ".join(parts))
 
         # Handle gesture transitions
