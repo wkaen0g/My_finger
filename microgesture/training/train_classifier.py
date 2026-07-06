@@ -72,6 +72,51 @@ def load_data(data_dir: str | Path) -> tuple[torch.Tensor, torch.Tensor]:
     return torch.from_numpy(X).float(), torch.from_numpy(y).long()
 
 
+def evaluate(model: GestureMLP, test_dir: str | Path,
+             device: torch.device | None = None) -> dict:
+    """Evaluate a trained model on a separate test set.
+
+    Returns dict with keys: accuracy, per_class (list of (label, acc)),
+    confusion (CxC matrix), total_samples.
+    """
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    X, y = load_data(test_dir)
+    model.eval()
+    model.to(device)
+    X, y = X.to(device), y.to(device)
+
+    with torch.no_grad():
+        logits = model(X)
+        preds = logits.argmax(dim=1)
+        correct = (preds == y).float()
+
+    n_total = len(y)
+    acc = correct.mean().item()
+    n_classes = logits.shape[1]
+
+    confusion = torch.zeros(n_classes, n_classes, dtype=torch.long)
+    for t, p in zip(y.cpu(), preds.cpu()):
+        confusion[t, p] += 1
+
+    per_class = []
+    labels_map = list(_GESTURES)
+    for i in range(n_classes):
+        mask = (y == i)
+        if mask.sum() > 0:
+            cls_acc = correct[mask].mean().item()
+            per_class.append((labels_map[i] if i < len(labels_map) else f"class_{i}", cls_acc))
+
+    logger.info("=== Test Set Evaluation ===")
+    logger.info("Accuracy: %.4f (%.1f%%)", acc, acc * 100)
+    for name, cls_acc in per_class:
+        logger.info("  %s: %.1f%%", name, cls_acc * 100)
+
+    return {"accuracy": acc, "per_class": per_class, "confusion": confusion,
+            "total_samples": n_total}
+
+
 def train(
     data_dir: str | Path,
     model_dir: str | Path,
@@ -81,6 +126,7 @@ def train(
     lr: float = 1e-3,
     hidden: int = 128,
     dropout: float = 0.3,
+    test_dir: str | Path | None = None,
 ) -> GestureMLP:
     """Train MLP classifier, return the model."""
 
@@ -142,6 +188,11 @@ def train(
     # Load best
     model.load_state_dict(torch.load(model_dir / "best_model.pt"))
     logger.info("Training complete. Best val_acc=%.3f", best_acc)
+
+    # ── Test set evaluation ────────────────────────────────────────────
+    if test_dir and Path(test_dir).exists():
+        evaluate(model, test_dir, device)
+
     return model
 
 
@@ -157,6 +208,7 @@ def train_with_pretrain(
     lr_finetune: float = 1e-4,
     hidden: int = 128,
     dropout: float = 0.3,
+    test_dir: str | Path | None = None,
 ) -> GestureMLP:
     """Two-stage training: pretrain on HaGRID, fine-tune on self-collected data."""
 
@@ -198,6 +250,11 @@ def train_with_pretrain(
                            epochs_finetune, device, model_dir, "best_model.pt")
     logger.info("Fine-tune complete. Best val_acc=%.3f", best_acc)
     model.load_state_dict(torch.load(model_dir / "best_model.pt"))
+
+    # ── Test set evaluation ────────────────────────────────────────────
+    if test_dir and Path(test_dir).exists():
+        evaluate(model, test_dir, device)
+
     return model
 
 

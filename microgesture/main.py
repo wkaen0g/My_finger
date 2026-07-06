@@ -298,9 +298,9 @@ class GesturePipeline:
         rule_result = self._static_recognizer.predict(hand.landmarks)
         gesture = Gesture[rule_result.label]
 
-        # ONNX runs every 5 frames to avoid stutter
+        # ONNX runs every frame
         self._shadow_frame += 1
-        if self._onnx_recognizer is not None and self._shadow_frame % 5 == 0:
+        if self._onnx_recognizer is not None:
             onnx_result = self._onnx_recognizer.predict(hand.landmarks)
             if onnx_result.confidence >= self._shadow_threshold:
                 onnx_gesture = Gesture[onnx_result.label]

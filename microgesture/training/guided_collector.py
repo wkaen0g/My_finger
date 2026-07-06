@@ -167,9 +167,16 @@ def run_guided_collection(data_dir: str | Path = "microgesture/training/data"):
 
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Guided gesture data collector")
+    parser.add_argument("--data-dir", default="microgesture/training/data",
+                        help="Output directory for collected .npz files "
+                             "(default: microgesture/training/data)")
+    args = parser.parse_args()
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    run_guided_collection()
+    run_guided_collection(args.data_dir)
