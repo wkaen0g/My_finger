@@ -132,8 +132,11 @@ class SystemTray:
 
     def set_state(self, state: TrayState) -> None:
         self._state = state
-        if self._icon:
-            self._icon.icon = _ICONS[state]
+        if self._icon is not None:
+            try:
+                self._icon.icon = _ICONS[state]
+            except Exception:
+                logger.debug("Tray icon update deferred (not ready yet)")
 
     def run(self) -> None:
         import pystray

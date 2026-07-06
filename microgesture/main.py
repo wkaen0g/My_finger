@@ -525,13 +525,13 @@ def main(argv=None) -> None:
         register_gesture=lambda: pipeline.handle_register_gesture(),
     ))
 
-    pipeline._on_status_change = lambda c: tray.set_state(
-        TrayState.NORMAL if c else TrayState.NO_CAMERA
-    )
-
     pipeline.start()
 
     def _tray_thread():
+        # Bind status callback AFTER tray.run() initialises the icon
+        pipeline._on_status_change = lambda c: tray.set_state(
+            TrayState.NORMAL if c else TrayState.NO_CAMERA
+        )
         tray.run()
 
     tt = threading.Thread(target=_tray_thread, daemon=True, name="tray")
