@@ -23,11 +23,11 @@ from microgesture.training.data_collector import DataCollector, GESTURES
 logger = logging.getLogger(__name__)
 
 _GESTURE_CN = {
-    "PALM_OPEN":  ("手掌张开", (0, 255, 0)),   # 手掌张开
-    "FIST":       ("握拳",       (0, 0, 255)),          # 握拳
-    "TWO_FINGER": ("双指伸出", (255, 0, 0)),    # 双指伸出
-    "PINCH":      ("捏合",       (255, 255, 0)),        # 捏合
-    "NO_HAND":    ("手移出画面", (128, 128, 128)),  # 手移出画面
+    "PALM_OPEN":  ("手掌张开", (0, 255, 0)),
+    "FIST":       ("握拳",       (0, 0, 255)),
+    "TWO_FINGER": ("双指伸出", (255, 0, 0)),
+    "PINCH":      ("捏合",       (255, 255, 0)),
+    "NO_HAND":    ("手移出画面", (128, 128, 128)),
 }
 
 _FRAMES_PER_GESTURE = 500
@@ -72,8 +72,15 @@ def _draw_instruction(frame: np.ndarray, text: str, color,
     return blended
 
 
-def run_guided_collection(data_dir: str | Path = "microgesture/training/data"):
-    """Run the guided collection flow."""
+def run_guided_collection(data_dir: str | Path = "microgesture/training/data",
+                          frames_per_gesture: int = _FRAMES_PER_GESTURE):
+    """Run the guided collection flow.
+
+    Args:
+        data_dir: Output directory for .npz files.
+        frames_per_gesture: Number of frames to record per gesture class.
+                            Default 500; increase for more training data.
+    """
     config = get_config()
     data_dir = Path(data_dir)
 
@@ -105,20 +112,19 @@ def run_guided_collection(data_dir: str | Path = "microgesture/training/data"):
             frame = capture.latest_frame()
             if frame is None:
                 frame = dummy.copy()
-            display = _draw_instruction(frame, name, color, str(sec), "准备")  # 准备
+            display = _draw_instruction(frame, name, color, str(sec), "准备")
             cv2.imshow("Gesture Collector", display)
             cv2.waitKey(1)
             time.sleep(1.0)
 
         # ── Recording phase ───────────────────────────────────────
         collector.start(label)
-        last_display = 0
         total_iterations = 0
         total_frames = 0
         total_detections = 0
-        max_iterations = _FRAMES_PER_GESTURE * 15
+        max_iterations = frames_per_gesture * 15
 
-        while collector.sample_count < _FRAMES_PER_GESTURE:
+        while collector.sample_count < frames_per_gesture:
             total_iterations += 1
             if total_iterations > max_iterations:
                 logger.warning("%s: timeout after %d iters (frames=%d det=%d samples=%d)",
@@ -141,8 +147,8 @@ def run_guided_collection(data_dir: str | Path = "microgesture/training/data"):
                     total_detections += 1
 
             # Update display every 30 iterations
-            if total_iterations % 30 == 0 or collector.sample_count == _FRAMES_PER_GESTURE:
-                info = f"{collector.sample_count}/{_FRAMES_PER_GESTURE}"
+            if total_iterations % 30 == 0 or collector.sample_count == frames_per_gesture:
+                info = f"{collector.sample_count}/{frames_per_gesture}"
                 display = _draw_instruction(frame, name, color, info, "录制中")
                 cv2.imshow("Gesture Collector", display)
                 cv2.waitKey(1)
@@ -150,12 +156,11 @@ def run_guided_collection(data_dir: str | Path = "microgesture/training/data"):
         collector.stop()
         logger.info("%s: %d frames (%d iters)", name, collector.sample_count,
                      total_iterations)
-        # Save immediately so the next start() clearing _samples doesn't lose data
         collector.save(data_dir)
 
     # ── Save ───────────────────────────────────────────────────────
     dummy.fill(0)
-    dummy = _pil_text(dummy, "保存中...",  # 保存中...
+    dummy = _pil_text(dummy, "保存中...",
                       (640 // 2, 480 // 2), 40, (0, 255, 0))
     cv2.imshow("Gesture Collector", dummy)
     cv2.waitKey(1)
@@ -163,7 +168,8 @@ def run_guided_collection(data_dir: str | Path = "microgesture/training/data"):
     capture.stop()
     detector.close()
     cv2.destroyAllWindows()
-    logger.info("Guided collection complete → %s", data_dir)
+    logger.info("Guided collection complete → %s (%d frames/gesture)",
+                data_dir, frames_per_gesture)
 
 
 if __name__ == "__main__":
@@ -172,6 +178,8 @@ if __name__ == "__main__":
     parser.add_argument("--data-dir", default="microgesture/training/data",
                         help="Output directory for collected .npz files "
                              "(default: microgesture/training/data)")
+    parser.add_argument("--frames", type=int, default=_FRAMES_PER_GESTURE,
+                        help=f"Frames per gesture class (default: {_FRAMES_PER_GESTURE})")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -179,4 +187,4 @@ if __name__ == "__main__":
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    run_guided_collection(args.data_dir)
+    run_guided_collection(args.data_dir, frames_per_gesture=args.frames)
