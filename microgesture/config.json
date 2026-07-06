@@ -46,10 +46,10 @@
         "show_landmarks": true
     },
     "logging": {
-        "level": "INFO",
+        "level": "DEBUG",
         "dir": "logs",
-        "max_bytes": 5242880,
-        "backup_count": 3
+        "max_bytes": 10485760,
+        "backup_count": 5
     },
     "dtw": {
         "arm_frames": 10,

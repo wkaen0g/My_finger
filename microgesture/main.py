@@ -130,6 +130,7 @@ class GesturePipeline:
         )
 
         # ── Phase 2: shadow-mode recognition ──────────────────────────
+        logger.info("Model: RuleEngine (geometry) — 5 gestures")
         self._static_recognizer = StaticClassifier(self.engine)
         self._onnx_recognizer: GestureRecognizer | None = None
         self._shadow_threshold = config.get("system", "shadow_confidence_threshold", default=0.90)
@@ -139,9 +140,12 @@ class GesturePipeline:
             try:
                 from .pipeline.classifier import ONNXClassifier
                 self._onnx_recognizer = ONNXClassifier(onnx_path)
-                logger.info("Shadow mode: ONNX classifier loaded")
+                logger.info("Model: ONNX MLP classifier loaded — shadow threshold=%.0f%%",
+                            self._shadow_threshold * 100)
             except Exception:
-                logger.warning("Shadow mode: ONNX load failed, using rules only")
+                logger.warning("Model: ONNX load failed, using rules only", exc_info=True)
+        else:
+            logger.info("Model: ONNX not found at %s — rules only", onnx_path)
 
         self.tap = AirTapDetector(
             tap_threshold=config.get("gesture", "tap_threshold", default=0.3),
@@ -200,10 +204,11 @@ class GesturePipeline:
             from .recognition.dtw_trainer import DtwTrainer
             self._dtw_matcher = DtwMatcher(config)
             self._dtw_trainer = DtwTrainer(config)
-            logger.info("DTW gesture matcher loaded (%d templates)",
-                        self._dtw_matcher.template_count)
+            logger.info("Model: DTW matcher loaded — %d templates, threshold=%.1f",
+                        self._dtw_matcher.template_count,
+                        config.get("dtw", "match_threshold", default=8.0))
         except Exception:
-            logger.warning("DTW matcher not available (fastdtw missing?)", exc_info=True)
+            logger.warning("Model: DTW not available (fastdtw missing?)", exc_info=True)
 
     def _draw_preview(self, frame, hand, gesture) -> None:
         if not self._preview:
@@ -301,18 +306,30 @@ class GesturePipeline:
 
         # ONNX runs every frame
         self._shadow_frame += 1
+        model_source = "rule"
+        onnx_conf = 0.0
         if self._onnx_recognizer is not None:
             onnx_result = self._onnx_recognizer.predict(hand.landmarks)
+            onnx_conf = onnx_result.confidence
             if onnx_result.confidence >= self._shadow_threshold:
-                onnx_gesture = Gesture[onnx_result.label]
-                if onnx_gesture != gesture:
-                    logger.debug("Shadow override: rule=%s → onnx=%s (%.2f)",
-                                 gesture.name, onnx_gesture.name, onnx_result.confidence)
-                gesture = onnx_gesture
-            else:
-                logger.debug("Shadow defer: onnx=%s (%.2f) < %.2f, using rule=%s",
-                             onnx_result.label, onnx_result.confidence,
-                             self._shadow_threshold, gesture.name)
+                if Gesture[onnx_result.label] != gesture:
+                    model_source = "onnx"
+                gesture = Gesture[onnx_result.label]
+
+        # ── Periodic model inference summary (every 150 frames ≈ 5s) ──
+        if self._shadow_frame % 150 == 0:
+            parts = [
+                f"gesture={gesture.name}",
+                f"source={model_source}",
+            ]
+            if self._onnx_recognizer is not None:
+                parts.append(f"onnx_conf={onnx_conf:.2f}")
+                rule_matches = (model_source == "rule") or (
+                    Gesture[rule_result.label] == gesture
+                )
+                if not rule_matches:
+                    parts.append(f"rule={rule_result.label}")
+            logger.debug("Inference: %s", " | ".join(parts))
 
         # Handle gesture transitions
         if gesture == Gesture.PALM_OPEN or gesture == Gesture.PINCH:
