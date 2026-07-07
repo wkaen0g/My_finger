@@ -43,12 +43,14 @@ class TrayCallbacks:
         set_right_click: Callable[[str], None],
         quit_app: Callable[[], None],
         register_gesture: Callable[[], None] | None = None,
+        open_settings: Callable[[], None] | None = None,
     ):
         self.toggle_tracking = toggle_tracking
         self.set_sensitivity = set_sensitivity
         self.set_right_click = set_right_click
         self.quit_app = quit_app
         self.register_gesture = register_gesture
+        self.open_settings = open_settings
 
 
 # ── tray ───────────────────────────────────────────────────────────────────
@@ -94,6 +96,10 @@ class SystemTray:
         if self._cb.register_gesture:
             self._cb.register_gesture()
 
+    def _on_open_settings(self) -> None:
+        if self._cb.open_settings:
+            self._cb.open_settings()
+
     # ── menu ───────────────────────────────────────────────────────────
 
     def _build_menu(self):
@@ -124,6 +130,8 @@ class SystemTray:
             Menu.SEPARATOR,
             MenuItem("Register Gesture ...", lambda i: self._on_register_gesture(),
                      enabled=lambda i: self._cb.register_gesture is not None),
+            MenuItem("Settings ...", lambda i: self._on_open_settings(),
+                     enabled=lambda i: self._cb.open_settings is not None),
             Menu.SEPARATOR,
             MenuItem("Quit", lambda i: self._on_quit()),
         )

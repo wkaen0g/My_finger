@@ -540,6 +540,38 @@ class GesturePipeline:
         self._right_click_mode = mode
         logger.info("Right click mode set to %s", mode)
 
+    def set_scroll_sensitivity(self, value: float) -> None:
+        self.scroll.sensitivity = value
+        logger.info("Scroll sensitivity set to %.1f", value)
+
+    def set_scroll_deadzone(self, value: float) -> None:
+        self.scroll._deadzone = value
+        logger.info("Scroll deadzone set to %.3f", value)
+
+    def set_shadow_threshold(self, value: float) -> None:
+        self._shadow_threshold = value
+        logger.info("Shadow threshold set to %.0f%%", value * 100)
+
+    def open_settings(self) -> None:
+        """Open the settings GUI panel."""
+        try:
+            from .system.settings_gui import open_settings_panel
+            panel = open_settings_panel(
+                cursor_sensitivity=self.cursor.sensitivity,
+                scroll_sensitivity=self.scroll.sensitivity,
+                scroll_deadzone=self.scroll._deadzone,
+                right_click_mode=self._right_click_mode,
+                shadow_threshold=self._shadow_threshold,
+                on_cursor_sensitivity=self.set_sensitivity,
+                on_scroll_sensitivity=self.set_scroll_sensitivity,
+                on_scroll_deadzone=self.set_scroll_deadzone,
+                on_right_click=self.set_right_click,
+                on_shadow_threshold=self.set_shadow_threshold,
+            )
+            logger.info("Settings panel opened")
+        except Exception:
+            logger.exception("Failed to open settings panel")
+
     def start(self) -> None:
         self._running = True
         self.capture.start()
@@ -579,6 +611,7 @@ def main(argv=None) -> None:
         set_right_click=pipeline.set_right_click,
         quit_app=lambda: shutdown(pipeline, tray),
         register_gesture=lambda: pipeline.handle_register_gesture(),
+        open_settings=lambda: pipeline.open_settings(),
     ))
 
     pipeline.start()
