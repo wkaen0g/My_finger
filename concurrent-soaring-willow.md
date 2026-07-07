@@ -215,27 +215,38 @@ microgesture/
 
 ## Phase 3: 自定义手势（目标：用户可注册个性化手势）
 
-### 3.1 DTW 匹配器 (`recognition/dtw_matcher.py`)
-- [ ] 实现 `GestureRecognizer` 接口
-- [ ] 手势分段：握拳(开始) → 动作序列 → 握拳(结束)
-- [ ] 多模板存储：每个手势保留3个样本
-- [ ] DBA (DTW Barycenter Averaging) 合成平均模板
-- [ ] 滑动窗口 DTW 匹配：窗口序列与各模板计算 DTW 距离，最小距离<阈值 → 匹配
-- [ ] 使用 `fastdtw` 或 `dtaidistance` 库
+### 3.1 DTW 匹配器 (`recognition/dtw_matcher.py`) ✅ 2026-07-06
+- [x] 状态机: IDLE → ARMING → RECORDING → MATCHING
+- [x] 手势分段：握拳(开始) → 动作序列 → 握拳(结束)
+- [x] 多模板存储：DBA 平均（3次 → 1个模板）
+- [x] DBA (DTW Barycenter Averaging) 合成平均模板
+- [x] 分段式 DTW 匹配：序列与各模板计算 fastdtw 距离，最小距离<阈值 → 匹配
+- [x] 使用 `fastdtw` 库 (radius=10, 路径长度归一化)
+- [x] 平移不变性：每帧减去手腕坐标
 
-### 3.2 注册流程
-- [ ] 托盘菜单"注册新手势"入口
-- [ ] 首次启动引导向导：提示注册2-3个手势
-- [ ] 注册步骤：握拳→听到提示音→做动作→握拳结束，重复3次
-- [ ] 手势模板持久化到 `config.json` 或独立 `templates.json`
+### 3.2 注册流程 ✅ 2026-07-06
+- [x] 托盘菜单"Register Gesture..."入口
+- [ ] 首次启动引导向导（后续）
+- [x] 注册步骤：握拳→做动作→握拳结束，重复3次
+- [x] 手势模板持久化到 `templates.json`
 
-### 3.3 自定义手势触发
-- [ ] 握拳冻结态 → 比出已注册手势编号 → 做自定义动作 → 触发对应系统事件
-- [ ] 事件可配置：每个自定义手势映射到键盘快捷键或系统命令
+### 3.3 自定义手势触发 ✅ 2026-07-06
+- [x] FIST 分隔 → 动作序列匹配 → 触发系统事件
+- [x] 事件可配置：映射到键盘快捷键 (Win32 keybd_event)
 
 ---
 
-## Phase 4: 精修与增强
+## Phase 4: 精修与增强 🔧 部分完成
+
+### 4.0 Phase 2/3 精修 ✅ 2026-07-06
+- [x] FIST/PINCH 判定优先级修复（FIST → PINCH → TWO_FINGER → PALM）
+- [x] ONNX 每帧推理（去掉 5 帧跳帧）
+- [x] 双指滚动灵敏度 40.0→2.0 + 死区 0.03
+- [x] 日志噪音优化（DEBUG 间隔 5→300 帧）
+- [x] 训练数据量可调（--frames 参数）
+- [x] 独立测试集支持（evaluate + test_dir）
+- [x] config set/save 运行时持久化
+- [x] InputController 键盘快捷键模拟
 
 ### 4.1 诊断面板
 - [ ] 托盘菜单"诊断"：显示 fps、置信度、当前手势状态、滤波响应时间

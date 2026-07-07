@@ -811,7 +811,115 @@ Jester 帧 → MediaPipe Hands → RuleEngine.classify() → 伪标签
 
 ### 下一步
 
-1. 运行 `python -m microgesture.training.hagrid jester` 生成完整 Jester 预训练数据
-2. 运行 `train_with_pretrain()` 两阶段训练: Jester 预训练 → 自采数据微调
-3. 对比微调前后分类器在真实摄像头下的表现
-4. Phase 3: DTW 自定义手势匹配器
+~~1. Jester 预训练数据~~ ✅ 2026-07-06
+~~2. 两阶段训练~~ ✅ 2026-07-06
+~~3. Phase 3: DTW 匹配器~~ ✅ 2026-07-06
+4. 真实摄像头下对比验证
+5. Phase 4: 精修增强
+
+---
+
+## 2026-07-06 — Phase 3 DTW 自定义手势匹配器完成
+
+### 新建文件
+
+```
+microgesture/recognition/
+├── dtw_matcher.py        # DTW 序列匹配器
+└── dtw_trainer.py        # 手势模板训练器
+```
+
+### DTW 匹配器 (`dtw_matcher.py`)
+
+**状态机**: `IDLE → ARMING → RECORDING → MATCHING`
+- IDLE: 检测到 FIST → ARMING
+- ARMING: 连续握拳 arm_frames 帧 → RECORDING
+- RECORDING: 缓冲关键点序列 → 再次握拳 → 计算 DTW 匹配
+- arm_frames=15 (~500ms)，防止短暂握拳误触发
+
+**核心功能**:
+- FIST 分隔协议: 握拳(开始) → 动作序列 → 握拳(结束)
+- fastdtw 近似匹配 (radius=10)，路径长度归一化
+- 平移不变: 每帧减去手腕坐标
+- 模板加载/持久化到 `templates.json`
+
+### DTW 训练器 (`dtw_trainer.py`)
+
+- 3 次录制 → DBA (DTW Barycenter Averaging) 平均
+- DBA 算法: 5 轮迭代，DTW 对齐 → 逐帧平均
+- 返回 `TrainerResult` 供持久化
+
+### 关联修改
+
+| 文件 | 改动 |
+|------|------|
+| `config.py` | 新增 `set()`, `save()`, `as_dict()` — 运行时持久化 |
+| `config.json` | 新增 `dtw` 配置段 |
+| `system/input.py` | 新增 `key_combo()` — Win32 键盘快捷键模拟 (50+ 键码) |
+| `system/tray.py` | 新增 "Register Gesture..." 菜单项 |
+| `main.py` | DTW 并行路径 + 训练模式 + 预览叠加 |
+
+### 测试结果
+
+- 状态机转换: PASS (IDLE↔ARMING↔RECORDING)
+- 圆形手势模板匹配: dist=0.221, conf=100%
+- 3 次录制 + DBA 平均: PASS
+
+---
+
+## 2026-07-06 — Phase 2/3 精修 (手势优先级 & 日志 & 训练增强)
+
+### 规则引擎: FIST vs PINCH 优先级修复
+
+**问题**: 握拳时拇指卷曲贴向食指，pinch_norm < 0.35，FIST 被误判为 PINCH
+
+**修复** (`gesture_engine.py`):
+1. FIST 提到最先检查（5指全屈曲是最强信号）
+2. PINCH 加额外条件: index 不能是伸展状态（防 TWO_FINGER 误判）
+
+新判定顺序: `FIST → PINCH → TWO_FINGER → PALM_OPEN → fallback`
+
+### 日志系统优化
+
+**问题**: DEBUG 级别每5帧输出6行 → ~30行/秒 → 5MB 日志一天就满
+
+**修复**:
+| 模块 | 之前 | 之后 |
+|------|------|------|
+| gesture_engine 指尖判定 | 每 5 帧 | 每 300 帧 |
+| air_tap phase 转换 | 每次 | 每 300 帧 |
+| pinch 捏合参数 | 每 5 帧 | 每 300 帧 |
+| cursor 光标位移 | 每 5 帧 | 每 300 帧 |
+| ONNX shadow 推理 | 逐帧 log | 统一为 150帧周期摘要 |
+
+新增 `--debug` CLI 参数 + 模型加载日志。
+
+### 推理日志修复
+
+**Bug**: `source=onnx` 仅在 ONNX 与规则引擎不一致时才记录 → ONNX 覆盖率误报为 14%
+
+**修复**: ONNX 置信度 ≥ 阈值时始终标记 source=onnx，不一致时额外标记 rule_said=XXX。实际 ONNX 覆盖率 ~73-91%。
+
+### 训练增强
+
+- `guided_collector.py`: 新增 `--frames` 参数，可调每类帧数 (默认 500)
+- `train_classifier.py`: 新增 `evaluate()` 独立测试集评估 + `test_dir` 参数
+- 新增 `start_collector_test.bat` — 测试集采集脚本
+
+### 两阶段训练结果 (最新)
+
+| 数据集 | 准确率 |
+|--------|--------|
+| 测试集 (data_test) | **100.0%** |
+| 自采训练集 (data) | 97.9% |
+| Jester 预训练 (data_jester) | 78.1% |
+
+### 双指滚动灵敏度
+
+`sensitivity: 40.0 → 8.0 → 3.0 → 2.0` + 新增 deadzone=0.03
+
+### 下一步
+
+1. 真实摄像头下对比 ONNX vs 规则引擎
+2. Phase 4: 诊断面板 + 设置 GUI
+3. 多显示器支持
