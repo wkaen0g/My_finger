@@ -110,11 +110,19 @@ class GesturePipeline:
         self._tracking = True
 
         # ── Shared Tk root for all UI panels ────────────────────────────
-        import tkinter as tk
-        import threading
-        self._tk_root = tk.Tk()
-        self._tk_root.withdraw()  # hidden
-        threading.Thread(target=self._tk_root.mainloop, daemon=True).start()
+        # Tk() and mainloop() MUST run in the same thread (Windows COM apartment).
+        tk_ready = threading.Event()
+
+        def _tk_thread():
+            import tkinter as tk
+            root = tk.Tk()
+            root.withdraw()
+            self._tk_root = root
+            tk_ready.set()
+            root.mainloop()
+
+        threading.Thread(target=_tk_thread, daemon=True, name="tk-ui").start()
+        tk_ready.wait(timeout=5)  # blocks until Tk root is created
         self._tracking_lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._on_status_change = on_status_change
