@@ -61,10 +61,12 @@ class CursorController:
 
     def __init__(self, screen_width: int = 1920, screen_height: int = 1080,
                  sensitivity: float = 1.5, deadzone: float = 0.003,
+                 tap_deadzone: float = 0.01,
                  beta: float = 0.007, fcmin: float = 1.0, min_cutoff: float = 1.0,
                  fps: float = 30.0):
         self.sensitivity = sensitivity
         self.deadzone = deadzone
+        self.tap_deadzone = tap_deadzone
         self._sw = screen_width
         self._sh = screen_height
         self._filter_x = OneEuroFilter(beta, fcmin, min_cutoff, fps)
@@ -72,6 +74,7 @@ class CursorController:
         self._prev_raw: Optional[Tuple[float, float]] = None
         self._frozen = False
         self._frame = 0
+        self._tap_active = False
 
     def freeze(self) -> None:
         self._frozen = True
@@ -102,8 +105,8 @@ class CursorController:
         raw_dx = (sx - self._prev_raw[0]) * self.sensitivity * self._sw
         raw_dy = (sy - self._prev_raw[1]) * self.sensitivity * self._sh
 
-        # Dead zone: ignore sub-pixel jitter
-        dz = self.deadzone * self._sw
+        # Dead zone: use larger threshold during tap to prevent cursor drift
+        dz = (self.tap_deadzone if self._tap_active else self.deadzone) * self._sw
         if abs(raw_dx) < dz:
             raw_dx = 0.0
         if abs(raw_dy) < dz:

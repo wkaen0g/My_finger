@@ -86,6 +86,11 @@ class AirTapDetector:
 
     # ── public API ──────────────────────────────────────────────────────
 
+    @property
+    def is_tapping(self) -> bool:
+        """True if the detector is actively tracking a potential tap."""
+        return self._phase in (_Phase.BENDING, _Phase.REBOUNDING)
+
     def update(self, landmarks: np.ndarray) -> TapResult:
         self._frame += 1
         mcp = landmarks[MCP_IDX]

@@ -170,6 +170,7 @@ class GesturePipeline:
             screen_width=sw, screen_height=sh,
             sensitivity=config.get("cursor", "sensitivity", default=0.6),
             deadzone=config.get("cursor", "deadzone", default=0.003),
+            tap_deadzone=config.get("cursor", "tap_deadzone", default=0.012),
             beta=config.get("cursor", "smoothing_beta", default=0.007),
             fcmin=config.get("cursor", "smoothing_fcmin", default=1.0),
             min_cutoff=config.get("cursor", "smoothing_cutoff", default=1.0),
@@ -406,9 +407,11 @@ class GesturePipeline:
             self.scroll.stop()
 
     def _handle_cursor_move(self, landmarks) -> None:
-        # Suppress cursor when finger is bending (tap motion)
+        # Full cursor suppression when finger is bending hard
         if self._tap_result is not None and self._tap_result.suppress_cursor:
             return
+        # Larger deadzone when tracking a potential tap
+        self.cursor._tap_active = self.tap.is_tapping
         tip = landmarks[8]
         dx, dy = self.cursor.update(tip[0], tip[1])
         self.input_ctrl.move(dx, dy)

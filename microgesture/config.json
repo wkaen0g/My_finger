@@ -25,6 +25,7 @@
     "cursor": {
         "sensitivity": 0.8,
         "deadzone": 0.003,
+        "tap_deadzone": 0.012,
         "smoothing_beta": 0.007,
         "smoothing_fcmin": 1.0,
         "smoothing_cutoff": 1.0
