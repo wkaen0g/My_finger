@@ -626,8 +626,8 @@ class GesturePipeline:
         cfg.save()
         logger.info("Settings saved to config.json")
 
-    def open_control_panel(self) -> None:
-        """Open the unified control panel."""
+    def _do_open_control_panel(self) -> None:
+        """Actually create and open the control panel (must run on tk thread)."""
         try:
             from .system.control_panel import open_control_panel
 
@@ -686,6 +686,10 @@ class GesturePipeline:
             logger.info("Control panel opened")
         except Exception:
             logger.exception("Failed to open control panel")
+
+    def open_control_panel(self) -> None:
+        """Schedule control panel creation on the tk thread (thread-safe)."""
+        self._tk_root.after(0, self._do_open_control_panel)
 
     def start(self) -> None:
         self._running = True
