@@ -66,8 +66,8 @@ def setup_logging(config, debug: bool = False) -> None:
 
     level_name = "DEBUG" if debug else config.get("logging", "level", default="INFO")
     level = getattr(logging, level_name, logging.INFO)
-    max_bytes = config.get("logging", "max_bytes", default=5_242_880)
-    backup_count = config.get("logging", "backup_count", default=3)
+    max_bytes = config.get("logging", "max_bytes", default=10_485_760)
+    backup_count = config.get("logging", "backup_count", default=5)
 
     root = logging.getLogger()
     root.setLevel(level)
@@ -152,7 +152,7 @@ class GesturePipeline:
             min_bend=config.get("gesture", "tap_min_bend", default=0.15),
             suppress_threshold=config.get("gesture", "tap_suppress_threshold", default=0.1),
             bend_timeout=config.get("gesture", "tap_bend_timeout", default=12),
-            rebound_timeout=config.get("gesture", "tap_rebound_timeout", default=8),
+            rebound_timeout=config.get("gesture", "tap_rebound_timeout", default=12),
             cooldown_frames=config.get("gesture", "tap_cooldown_frames", default=8),
         )
         self._tap_result: TapResult | None = None
@@ -169,7 +169,7 @@ class GesturePipeline:
             logger.info("Fallback screen dimensions used: %dx%d", sw, sh)
         self.cursor = CursorController(
             screen_width=sw, screen_height=sh,
-            sensitivity=config.get("cursor", "sensitivity", default=0.6),
+            sensitivity=config.get("cursor", "sensitivity", default=0.8),
             deadzone=config.get("cursor", "deadzone", default=0.003),
             tap_deadzone=config.get("cursor", "tap_deadzone", default=0.012),
             beta=config.get("cursor", "smoothing_beta", default=0.007),
@@ -178,8 +178,8 @@ class GesturePipeline:
         )
         self.scroll = ScrollDetector(
             screen_height=sh,
-            sensitivity=config.get("scroll", "sensitivity", default=40.0),
-            deadzone=config.get("scroll", "deadzone", default=0.01),
+            sensitivity=config.get("scroll", "sensitivity", default=2.0),
+            deadzone=config.get("scroll", "deadzone", default=0.03),
             beta=config.get("scroll", "smoothing_beta", default=0.007),
             fcmin=config.get("scroll", "smoothing_fcmin", default=1.0),
             min_cutoff=config.get("scroll", "smoothing_cutoff", default=1.0),
