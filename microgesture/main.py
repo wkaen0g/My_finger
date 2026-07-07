@@ -520,12 +520,18 @@ class GesturePipeline:
             self.input_ctrl.scroll(int(round(delta)))
 
     def _run_loop(self) -> None:
+        _error_count = 0
+        _last_error_log = 0.0
         while self._running:
             try:
                 if self._tracking:
                     self._process_frame()
             except Exception:
-                logger.exception("Pipeline error, continuing")
+                _error_count += 1
+                now = time.time()
+                if now - _last_error_log > 10.0:  # throttle to every 10s
+                    logger.exception("Pipeline error #%d, continuing", _error_count)
+                    _last_error_log = now
 
             camera_ok = self.capture.is_connected
             if camera_ok != self._last_camera_ok:
@@ -591,7 +597,11 @@ class GesturePipeline:
         self.capture.stop()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=3)
+            if self._thread.is_alive():
+                logger.warning("Pipeline thread did not stop within timeout")
         self.detector.close()
+        if self._onnx_recognizer:
+            self._onnx_recognizer.close()
         logger.info("Gesture pipeline stopped")
 
 
@@ -651,7 +661,16 @@ def main(argv=None) -> None:
 
 def shutdown(pipeline: GesturePipeline, tray: SystemTray) -> None:
     pipeline.stop()
-    tray.stop()
+    try:
+        tray.stop()
+    except Exception:
+        logger.exception("Error stopping tray")
+    # Clean up OpenCV windows
+    try:
+        import cv2
+        cv2.destroyAllWindows()
+    except Exception:
+        pass
     logger.info("MicroGesture shutdown complete")
 
 

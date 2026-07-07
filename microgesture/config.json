@@ -39,7 +39,6 @@
     },
     "system": {
         "right_click_mode": "fist_tap",
-        "cursor_freeze_timeout": 2.0,
         "no_hand_sleep_timeout": 5.0,
         "shadow_confidence_threshold": 0.90
     },
