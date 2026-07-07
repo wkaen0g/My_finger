@@ -63,18 +63,15 @@ class CameraCapture:
         reconnect_delay = 0.5
         max_delay = 8.0
         attempts = 0
-        max_attempts = 5
 
         while not self._stop_event.is_set():
             if not self._connected:
-                if attempts >= max_attempts:
-                    logger.error("Max reconnect attempts reached, stopping capture")
-                    break
-                logger.info("Reconnect attempt %d/%d in %.1fs",
-                            attempts + 1, max_attempts, reconnect_delay)
+                logger.info("Camera reconnect attempt %d in %.1fs",
+                            attempts + 1, reconnect_delay)
                 time.sleep(reconnect_delay)
                 reconnect_delay = min(reconnect_delay * 2, max_delay)
                 if self._open_camera():
+                    logger.info("Camera reconnected after %d attempts", attempts + 1)
                     reconnect_delay = 0.5
                     attempts = 0
                 else:

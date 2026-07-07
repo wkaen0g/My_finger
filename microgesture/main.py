@@ -330,6 +330,10 @@ class GesturePipeline:
             self._draw_preview(frame, None, None)
             return
 
+        if self._no_hand_start is not None:
+            lost_time = time.time() - self._no_hand_start
+            if lost_time > 1.0:
+                logger.info("Hand re-detected after %.1fs", lost_time)
         self._no_hand_start = None
         self._tap_result = self.tap.update(hand.landmarks)
 
