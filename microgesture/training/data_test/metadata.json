@@ -1,7 +1,10 @@
 {
-  "PALM_OPEN": 0,
-  "FIST": 0,
-  "TWO_FINGER": 0,
-  "PINCH": 0,
-  "NO_HAND": 500
+  "PALM_OPEN": 1500,
+  "FIST": 1500,
+  "SINGLE_FINGER": 1000,
+  "TWO_FINGER": 1500,
+  "PINCH": 1500,
+  "NO_HAND": 1500,
+  "_total": 8500,
+  "_updated": "2026-07-07 19:58:07"
 }
