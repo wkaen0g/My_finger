@@ -192,6 +192,13 @@ class GesturePipeline:
         self._preview_frame_count = 0
         self._shadow_frame = 0
 
+        # ── Diagnostics ────────────────────────────────────────────────
+        self._fps = 0.0
+        self._fps_timer = time.time()
+        self._fps_frames = 0
+        self._inference_source = "rule"
+        self._onnx_conf = 0.0
+
         # ── Phase 3: DTW custom gesture matching ───────────────────────
         self._dtw_matcher = None
         self._dtw_trainer = None
@@ -272,6 +279,20 @@ class GesturePipeline:
                 cv2.putText(display, f"{n}={d:.3f}", (10, 80 + i * 16),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
 
+            # ── Diagnostic panel (top-right) ──────────────────────────
+            dz_mode = "TAP" if self.cursor._tap_active else "NORM"
+            dz_color = (0, 255, 255) if dz_mode == "TAP" else (100, 200, 100)
+            diag_lines = [
+                f"FPS:{self._fps:.0f}",
+                f"DZ:{dz_mode}",
+                f"{self._inference_source.upper()}:{self._onnx_conf:.2f}" if self._onnx_recognizer else "RULE",
+            ]
+            y_off = 50
+            for line in diag_lines:
+                display = _cjk_text(display, line, (w - 10, y_off), 16,
+                                    dz_color, anchor="ra")
+                y_off += 22
+
             # DTW state overlay
             if self._dtw_matcher is not None:
                 state_name = self._dtw_matcher.state.name
@@ -289,6 +310,15 @@ class GesturePipeline:
         cv2.waitKey(1)
 
     def _process_frame(self) -> None:
+        # ── FPS counter ────────────────────────────────────────────────
+        self._fps_frames += 1
+        now = time.time()
+        elapsed = now - self._fps_timer
+        if elapsed >= 1.0:
+            self._fps = self._fps_frames / elapsed
+            self._fps_frames = 0
+            self._fps_timer = now
+
         frame = self.capture.latest_frame()
         if frame is None:
             return
@@ -319,6 +349,8 @@ class GesturePipeline:
                 if Gesture[onnx_result.label] != gesture:
                     onnx_agreed = False
                 gesture = Gesture[onnx_result.label]
+        self._inference_source = model_source
+        self._onnx_conf = onnx_conf
 
         # ── Periodic model inference summary (every 150 frames ≈ 5s) ──
         if self._shadow_frame % 150 == 0:
