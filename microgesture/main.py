@@ -566,6 +566,59 @@ class GesturePipeline:
         self._shadow_threshold = value
         logger.info("Shadow threshold set to %.0f%%", value * 100)
 
+    def set_cursor_deadzone(self, value: float) -> None:
+        self.cursor.deadzone = value
+
+    def set_cursor_tap_deadzone(self, value: float) -> None:
+        self.cursor.tap_deadzone = value
+
+    def set_tap_threshold(self, value: float) -> None:
+        self.tap.tap_threshold = value
+
+    def set_tap_min_bend(self, value: float) -> None:
+        self.tap.min_bend = value
+
+    def set_dtw_motion(self, value: float) -> None:
+        if self._dtw_matcher:
+            self._dtw_matcher._motion_threshold = value
+
+    def set_dtw_still(self, value: int) -> None:
+        if self._dtw_matcher:
+            self._dtw_matcher._still_frames = int(value)
+
+    def set_dtw_min(self, value: int) -> None:
+        if self._dtw_matcher:
+            self._dtw_matcher._min_record_frames = int(value)
+
+    def set_dtw_threshold(self, value: float) -> None:
+        if self._dtw_matcher:
+            self._dtw_matcher._match_threshold = value
+
+    def set_dtw_cooldown(self, value: int) -> None:
+        if self._dtw_matcher:
+            self._dtw_matcher._cooldown_frames = int(value)
+
+    def save_all_settings(self) -> None:
+        """Persist current live settings to config.json."""
+        cfg = self.config
+        cfg.set("cursor", "sensitivity", value=self.cursor.sensitivity)
+        cfg.set("cursor", "deadzone", value=self.cursor.deadzone)
+        cfg.set("cursor", "tap_deadzone", value=self.cursor.tap_deadzone)
+        cfg.set("scroll", "sensitivity", value=self.scroll.sensitivity)
+        cfg.set("scroll", "deadzone", value=self.scroll._deadzone)
+        cfg.set("system", "right_click_mode", value=self._right_click_mode)
+        cfg.set("system", "shadow_confidence_threshold", value=self._shadow_threshold)
+        cfg.set("gesture", "tap_threshold", value=self.tap.tap_threshold)
+        cfg.set("gesture", "tap_min_bend", value=self.tap.min_bend)
+        if self._dtw_matcher:
+            cfg.set("dtw", "motion_threshold", value=self._dtw_matcher._motion_threshold)
+            cfg.set("dtw", "still_frames", value=self._dtw_matcher._still_frames)
+            cfg.set("dtw", "min_record_frames", value=self._dtw_matcher._min_record_frames)
+            cfg.set("dtw", "match_threshold", value=self._dtw_matcher._match_threshold)
+            cfg.set("dtw", "cooldown_frames", value=self._dtw_matcher._cooldown_frames)
+        cfg.save()
+        logger.info("Settings saved to config.json")
+
     def open_gesture_manager(self) -> None:
         """Open the gesture template manager."""
         try:
@@ -619,15 +672,34 @@ class GesturePipeline:
             from .system.settings_gui import open_settings_panel
             panel = open_settings_panel(
                 cursor_sensitivity=self.cursor.sensitivity,
+                cursor_deadzone=self.cursor.deadzone,
+                cursor_tap_deadzone=self.cursor.tap_deadzone,
                 scroll_sensitivity=self.scroll.sensitivity,
                 scroll_deadzone=self.scroll._deadzone,
                 right_click_mode=self._right_click_mode,
                 shadow_threshold=self._shadow_threshold,
+                tap_threshold=self.tap.tap_threshold,
+                tap_min_bend=self.tap.min_bend,
+                dtw_motion_threshold=self._dtw_matcher._motion_threshold if self._dtw_matcher else 0.005,
+                dtw_still_frames=self._dtw_matcher._still_frames if self._dtw_matcher else 10,
+                dtw_min_frames=self._dtw_matcher._min_record_frames if self._dtw_matcher else 15,
+                dtw_match_threshold=self._dtw_matcher._match_threshold if self._dtw_matcher else 8.0,
+                dtw_cooldown_frames=self._dtw_matcher._cooldown_frames if self._dtw_matcher else 90,
                 on_cursor_sensitivity=self.set_sensitivity,
+                on_cursor_deadzone=self.set_cursor_deadzone,
+                on_cursor_tap_deadzone=self.set_cursor_tap_deadzone,
                 on_scroll_sensitivity=self.set_scroll_sensitivity,
                 on_scroll_deadzone=self.set_scroll_deadzone,
                 on_right_click=self.set_right_click,
                 on_shadow_threshold=self.set_shadow_threshold,
+                on_tap_threshold=self.set_tap_threshold,
+                on_tap_min_bend=self.set_tap_min_bend,
+                on_dtw_motion=self.set_dtw_motion,
+                on_dtw_still=self.set_dtw_still,
+                on_dtw_min=self.set_dtw_min,
+                on_dtw_threshold=self.set_dtw_threshold,
+                on_dtw_cooldown=self.set_dtw_cooldown,
+                on_save=self.save_all_settings,
             )
             logger.info("Settings panel opened")
         except Exception:
