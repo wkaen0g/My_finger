@@ -690,11 +690,15 @@ class GesturePipeline:
                 on_delete_gesture=lambda n: self._dtw_matcher.remove_template(n) if self._dtw_matcher else None,
                 on_save=self.save_all_settings,
                 get_templates=get_templates,
+                is_training=self.is_training,
             )
             open_control_panel(self._tk_root, **kwargs)
             logger.info("Control panel opened")
         except Exception:
             logger.exception("Failed to open control panel")
+
+    def is_training(self) -> bool:
+        return self._trainer_event.is_set()
 
     def open_control_panel(self) -> None:
         """Schedule control panel creation on the tk thread (thread-safe)."""

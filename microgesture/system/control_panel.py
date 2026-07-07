@@ -63,6 +63,7 @@ class ControlPanel:
         on_delete_gesture: Callable[[str], None] | None = None,
         on_save: Callable[[], None] | None = None,
         get_templates: Callable[[], list[dict]] | None = None,
+        is_training: Callable[[], bool] | None = None,
     ):
         self._root = root
         self._on_save = on_save
@@ -70,6 +71,7 @@ class ControlPanel:
         self._on_register = on_register_gesture
         self._on_delete = on_delete_gesture
         self._get_templates = get_templates
+        self._is_training = is_training
         self._window_open = True
 
         win = tk.Toplevel(root)
@@ -263,10 +265,16 @@ class ControlPanel:
 
         btnf = ttk.Frame(f)
         btnf.grid(row=row, column=0, columnspan=2, sticky="ew", padx=4, pady=4)
-        ttk.Button(btnf, text="Register New", command=self._on_register_click).pack(
-            side=tk.LEFT, padx=(0, 4))
+        self._reg_btn = ttk.Button(btnf, text="Register New",
+                                   command=self._on_register_click)
+        self._reg_btn.pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(btnf, text="Delete", command=self._on_delete_click).pack(
             side=tk.LEFT)
+        row += 1
+
+        self._train_status = ttk.Label(f, text="", foreground="blue")
+        self._train_status.grid(row=row, column=0, columnspan=2, sticky="w",
+                                padx=4, pady=(4, 0))
 
         self._refresh_templates()
 
@@ -290,7 +298,22 @@ class ControlPanel:
             import time
             name = f"gesture_{time.strftime('%H%M%S')}"
             self._on_register(name, name, {"type": "key_combo", "modifiers": ["ctrl"], "key": "s"})
-            self._win.after(1000, self._refresh_templates)
+            self._reg_btn.configure(state="disabled", text="Training...")
+            self._train_status.configure(text="Ready... (stay still)")
+            self._poll_training()
+
+    def _poll_training(self):
+        """Check if training is complete, update status, re-enable button."""
+        if not self._window_open:
+            return
+        if hasattr(self, '_is_training') and self._is_training():
+            # Still training — poll again
+            self._win.after(500, self._poll_training)
+        else:
+            # Training complete
+            self._reg_btn.configure(state="normal", text="Register New")
+            self._train_status.configure(text="Training complete!")
+            self._refresh_templates()
 
     def _on_delete_click(self):
         sel = self._tree.selection()
