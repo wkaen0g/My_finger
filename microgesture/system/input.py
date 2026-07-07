@@ -168,31 +168,34 @@ class InputController:
             modifiers: List of modifier keys (e.g. ['ctrl', 'shift'])
             key: The main key (e.g. 'c', 'enter', 'f5')
         """
+        # Validate all inputs BEFORE pressing anything
         vk_key = _KEY_VK.get(key.lower())
         if vk_key is None:
             logger.warning("Unknown key: %s", key)
             return
 
-        # Press modifiers
+        vk_mods: list[int] = []
         for mod in modifiers:
-            vk_mod = _MODIFIER_VK.get(mod.lower())
-            if vk_mod is None:
+            vk = _MODIFIER_VK.get(mod.lower())
+            if vk is None:
                 logger.warning("Unknown modifier: %s", mod)
-                continue
-            _keybd_event(vk_mod, up=False)
+                return  # don't press anything if any modifier is unknown
+            vk_mods.append(vk)
 
-        # Press key
-        _keybd_event(vk_key, up=False)
+        # Press modifiers
+        pressed = list(vk_mods)
+        try:
+            for vk in vk_mods:
+                _keybd_event(vk, up=False)
 
-        # Small delay for reliability
-        import time
-        time.sleep(0.03)
+            # Press key
+            _keybd_event(vk_key, up=False)
 
-        # Release key
-        _keybd_event(vk_key, up=True)
-
-        # Release modifiers in reverse order
-        for mod in reversed(modifiers):
-            vk_mod = _MODIFIER_VK.get(mod.lower())
-            if vk_mod is not None:
-                _keybd_event(vk_mod, up=True)
+            import time
+            time.sleep(0.03)
+        finally:
+            # Always release key
+            _keybd_event(vk_key, up=True)
+            # Always release modifiers in reverse order
+            for vk in reversed(pressed):
+                _keybd_event(vk, up=True)
