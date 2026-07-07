@@ -50,7 +50,8 @@ class DtwTrainer:
     """
 
     TAKES_REQUIRED = 3
-    READY_SECONDS = 5
+    READY_SECONDS = 3
+    FIRST_READY_SECONDS = 5
 
     def __init__(self, config=None):
         self._state = TrainerState.IDLE
@@ -87,7 +88,7 @@ class DtwTrainer:
         self._name = name
         self._label = label
         self._state = TrainerState.READY
-        self._ready_end = time.time() + self.READY_SECONDS
+        self._ready_end = time.time() + self.FIRST_READY_SECONDS
         self._buffer.clear()
         self._takes.clear()
         self._still_counter = 0
@@ -200,7 +201,7 @@ class DtwTrainer:
             return (take_num, f"第{take_num}/3次 — 完成!")
         else:
             self._state = TrainerState.READY
-            self._ready_end = time.time() + self.READY_SECONDS
+            self._ready_end = time.time() + self.READY_SECONDS  # shorter for 2nd/3rd
             return (take_num, f"第{take_num}/3次 — 准备...")
 
     # ── DBA ───────────────────────────────────────────────────────────────────
