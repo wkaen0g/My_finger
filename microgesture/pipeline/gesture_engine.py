@@ -16,6 +16,7 @@ class Gesture(Enum):
     FIST = auto()
     TWO_FINGER = auto()
     PINCH = auto()
+    SINGLE_FINGER = auto()  # index extended only, others curled
 
 
 @dataclass
@@ -67,7 +68,17 @@ class RuleEngine:
             )
             logger.debug("指尖-MCP距离: %s | 伸=%d 屈=%d", parts, open_count, closed_count)
 
-        # Fist: check FIRST — most distinctive (all fingers curled).
+        # Single-finger: index extended, other 4 curled.
+        # Check BEFORE FIST — it's more specific (4 curled + 1 open).
+        idx_open = distances[1] > self.open_threshold
+        mid_closed = distances[2] < self.fist_threshold
+        ring_closed = distances[3] < self.fist_threshold
+        pinky_closed = distances[4] < self.fist_threshold
+        thumb_closed = distances[0] < self.fist_threshold
+        if idx_open and mid_closed and ring_closed and pinky_closed and thumb_closed:
+            return GestureResult(Gesture.SINGLE_FINGER, landmarks, 0.9)
+
+        # Fist: majority voting — 4+ fingers curled.
         # Must precede PINCH because a fist has thumb close to index,
         # which would otherwise trigger the pinch threshold.
         if closed_count >= 4:

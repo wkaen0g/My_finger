@@ -23,11 +23,12 @@ from microgesture.training.data_collector import DataCollector, GESTURES
 logger = logging.getLogger(__name__)
 
 _GESTURE_CN = {
-    "PALM_OPEN":  ("手掌张开", (0, 255, 0)),
-    "FIST":       ("握拳",       (0, 0, 255)),
-    "TWO_FINGER": ("双指伸出", (255, 0, 0)),
-    "PINCH":      ("捏合",       (255, 255, 0)),
-    "NO_HAND":    ("手移出画面", (128, 128, 128)),
+    "PALM_OPEN":     ("手掌张开", (0, 255, 0)),
+    "FIST":          ("握拳",       (0, 0, 255)),
+    "SINGLE_FINGER": ("单指伸出", (255, 128, 0)),
+    "TWO_FINGER":    ("双指伸出", (255, 0, 0)),
+    "PINCH":         ("捏合",       (255, 255, 0)),
+    "NO_HAND":       ("手移出画面", (128, 128, 128)),
 }
 
 _FRAMES_PER_GESTURE = 500

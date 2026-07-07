@@ -36,6 +36,7 @@ _GESTURE_CN = {
     "TWO_FINGER": "双指",
     "PINCH": "捏合",
     "NO_HAND": "无手",
+    "SINGLE_FINGER": "单指",
 }
 
 
@@ -260,6 +261,8 @@ class GesturePipeline:
             color = (0, 255, 0)
             if gesture == Gesture.FIST:
                 color = (0, 0, 255)
+            elif gesture == Gesture.SINGLE_FINGER:
+                color = (255, 128, 0)  # orange
             elif gesture == Gesture.TWO_FINGER:
                 color = (255, 0, 0)
             elif gesture == Gesture.PINCH:
@@ -426,8 +429,12 @@ class GesturePipeline:
         if gesture == Gesture.PALM_OPEN:
             self.cursor.unfreeze()
             self._handle_cursor_move(hand.landmarks)
-            self._handle_tap()
+            # Tap removed from PALM_OPEN — only SINGLE_FINGER triggers tap
             self._handle_pinch(hand.landmarks)
+
+        elif gesture == Gesture.SINGLE_FINGER:
+            self.cursor.freeze()
+            self._handle_tap()  # tap only in single-finger mode
 
         elif gesture == Gesture.FIST:
             self.cursor.freeze()

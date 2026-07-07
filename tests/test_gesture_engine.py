@@ -93,3 +93,18 @@ class TestRuleEngine:
         r = self.engine.classify(lm)
         assert isinstance(r, GestureResult)
         assert r.landmarks is lm
+
+    def test_single_finger(self):
+        """Index extended, other 4 curled → SINGLE_FINGER"""
+        lm = _make_landmarks([0.05, 0.30, 0.05, 0.05, 0.05])
+        r = self.engine.classify(lm)
+        assert r.gesture == Gesture.SINGLE_FINGER, \
+            f"Expected SINGLE_FINGER, got {r.gesture.name}"
+        assert r.confidence == 0.9
+
+    def test_two_finger_not_single_finger(self):
+        """Index+middle extended → TWO_FINGER, not SINGLE_FINGER"""
+        lm = _make_landmarks([0.05, 0.30, 0.30, 0.05, 0.05])
+        r = self.engine.classify(lm)
+        assert r.gesture == Gesture.TWO_FINGER, \
+            f"Expected TWO_FINGER, got {r.gesture.name}"

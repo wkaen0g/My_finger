@@ -14,7 +14,7 @@ from microgesture.recognition.base import GestureRecognizer, extract_features
 
 logger = logging.getLogger(__name__)
 
-GESTURES = ("PALM_OPEN", "FIST", "TWO_FINGER", "PINCH", "NO_HAND")
+GESTURES = ("PALM_OPEN", "FIST", "SINGLE_FINGER", "TWO_FINGER", "PINCH", "NO_HAND")
 
 
 class DataCollector:
