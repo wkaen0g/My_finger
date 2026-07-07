@@ -920,6 +920,50 @@ microgesture/recognition/
 
 ### 下一步
 
+~~1. 诊断面板~~ ✅ 2026-07-07
+~~2. 设置 GUI~~ ✅ 2026-07-07
+~~3. 多显示器~~ ✅ 2026-07-07
+4. 真实摄像头下对比验证
+
+---
+
+## 2026-07-07 — Phase 4 完成 + 代码质量审查
+
+### 诊断面板 (4.1)
+- 预览画面右上角实时覆盖: FPS、死区模式(NORM/TAP)、推理源+置信度
+- `_process_frame` FPS 计数器 (1秒滑动窗口)
+
+### 设置 GUI (4.3)
+- 新建 `system/settings_gui.py` — tkinter 实时调参
+- 光标灵敏度、滚动灵敏度/死区、右键模式、ONNX 阈值
+- 托盘菜单 "Settings..." 入口，所有滑块即时生效
+
+### 多显示器 (4.4)
+- 改用 `SM_CXVIRTUALSCREEN` 虚拟桌面尺寸
+- 光标可跨所有屏幕移动
+
+### 自动恢复 (4.2)
+- 摄像头无限重连（移除 max_attempts）
+- 手部重检测日志
+
+### 代码质量审查
+
+全项目审查发现 10 个问题并修复：
+
+| # | 问题 | 修复 |
+|---|------|------|
+| 1 | 零测试覆盖 (30 .py 文件) | **47 单元测试** (air_tap/gesture/pinch/cursor/dtw/base) |
+| 2 | `_run_loop` 静默吞全部异常 | 异常计数 + 10s 节流 |
+| 3 | 代码默认值与 config.json 6 处不一致 | 统一 (最严重: scroll 2.0 vs 40.0) |
+| 4 | 资源泄漏 (guided/jester/hagrid) | try/finally + `__enter__/__exit__` |
+| 5 | `_tracking` RMW 竞态 + trainer TOCTOU | `threading.Lock` + `threading.Event` |
+| 6 | `key_combo()` 未知 key → 修饰键卡死 | try/finally 保证释放 |
+| 7 | `templates.json` 直接写入 | 原子写入 (mkstemp + os.replace) |
+| 8 | `shutdown()` tray.stop() 无保护 | try/except |
+| 9 | 线程 join 无超时检查 | WARNING 日志 |
+| 10 | 未使用配置 `cursor_freeze_timeout` | 清理 |
+
+### 下一步
+
 1. 真实摄像头下对比 ONNX vs 规则引擎
-2. Phase 4: 诊断面板 + 设置 GUI
-3. 多显示器支持
+2. Jester 伪标签质量改善（规则引擎修复后重新生成）

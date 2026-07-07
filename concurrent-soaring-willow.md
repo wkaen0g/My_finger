@@ -252,18 +252,39 @@ microgesture/
 - [x] 预览画面上叠加实时诊断：FPS、死区模式(NORM/TAP)、推理源(ONNX/RULE) + 置信度
 - [x] 实时叠加层：关键点、手势标签、DTW状态、诊断信息
 
-### 4.2 自动恢复
-- [ ] 光线恢复自动重新检测手
-- [ ] 摄像头热插拔支持
+### 4.2 自动恢复 ✅ 2026-07-07
+- [x] 摄像头无限重连（移除 max_attempts 限制）
+- [x] 手部重检测日志通知
+- [ ] 光线恢复自动降低检测阈值（后续）
 
-### 4.3 设置 GUI 面板
-- [ ] 灵敏度滑块
-- [ ] 右键模式下拉选择
-- [ ] 手势灵敏度实时预览
+### 4.3 设置 GUI 面板 ✅ 2026-07-07
+- [x] 光标灵敏度滑块、滚动灵敏度滑块、滚动死区滑块
+- [x] 右键模式单选
+- [x] ONNX 接管阈值滑块
+- [x] 所有修改即时生效（滑块拖动即更新）
 
 ### 4.4 多显示器支持 ✅ 2026-07-07
 - [x] 虚拟桌面检测 (SM_CXVIRTUALSCREEN)
 - [x] 光标跨屏移动
+
+---
+
+## 代码质量审查 ✅ 2026-07-07
+
+全项目代码审查，修复 10 个问题：
+
+| # | 问题 | 修复 |
+|---|------|------|
+| 1 | 零测试覆盖 | 47 个单元测试 (air_tap/gesture_engine/pinch/cursor/dtw) |
+| 2 | _run_loop 静默吞异常 | 计数器 + 10s 节流日志 |
+| 3 | config.json vs 代码默认值 6 处不一致 | 统一默认值 |
+| 4 | 资源泄漏（guided_collector/hagrid/jester） | try/finally + context manager |
+| 5 | 线程竞态（tracking + trainer） | Lock + threading.Event |
+| 6 | key_combo 按键卡死 | try/finally 保证释放 |
+| 7 | templates.json 直接写入 → 损坏风险 | 原子写入 (mkstemp + os.replace) |
+| 8 | shutdown() 无异常保护 | try/except 保护 tray.stop() |
+| 9 | 线程 join 无超时检查 | 超时后 WARNING 日志 |
+| 10 | 未使用配置 cursor_freeze_timeout | 清理 |
 
 ---
 
