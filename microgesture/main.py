@@ -298,7 +298,8 @@ class GesturePipeline:
             # DTW state overlay
             if self._dtw_matcher is not None:
                 state_name = self._dtw_matcher.state.name
-                status = self._dtw_status if self._dtw_status else state_name
+                buf = self._dtw_matcher.buffer_size
+                status = self._dtw_status if self._dtw_status else f"{state_name}[{buf}]"
                 display = _cjk_text(display, f"DTW: {status}", (w - 10, 10), 18,
                                     (0, 255, 255), anchor="ra")
                 if self._dtw_matcher.template_count > 0:
@@ -398,7 +399,7 @@ class GesturePipeline:
         # ── Phase 3: DTW matching (parallel path, before normal dispatch) ──
         dtw_match = None
         if self._dtw_matcher is not None:
-            dtw_match = self._dtw_matcher.feed(hand.landmarks, gesture)
+            dtw_match = self._dtw_matcher.feed(hand.landmarks)
             if dtw_match is not None:
                 self._dtw_status = f"匹配: {dtw_match.label} ({dtw_match.confidence:.0%})"
                 logger.info("DTW match: %s (dist=%.2f conf=%.2f)",
@@ -565,6 +566,53 @@ class GesturePipeline:
         self._shadow_threshold = value
         logger.info("Shadow threshold set to %.0f%%", value * 100)
 
+    def open_gesture_manager(self) -> None:
+        """Open the gesture template manager."""
+        try:
+            from .system.gesture_manager import open_gesture_manager
+
+            def get_templates():
+                if self._dtw_matcher is None:
+                    return []
+                result = []
+                for t in self._dtw_matcher._templates:
+                    result.append({
+                        "name": t.name,
+                        "label": t.label,
+                        "sequence": t.sequence.tolist(),
+                        "action": t.action_config,
+                    })
+                return result
+
+            def get_state():
+                if self._dtw_matcher is None:
+                    return "N/A"
+                return self._dtw_matcher.state.name
+
+            def get_buffer():
+                if self._dtw_matcher is None:
+                    return 0
+                return self._dtw_matcher.buffer_size
+
+            def on_register(name, label, action):
+                self.handle_register_gesture(name, label, action)
+
+            def on_delete(name):
+                if self._dtw_matcher:
+                    self._dtw_matcher.remove_template(name)
+                    logger.info("Deleted DTW template: %s", name)
+
+            open_gesture_manager(
+                get_templates=get_templates,
+                get_state=get_state,
+                get_buffer=get_buffer,
+                on_register=on_register,
+                on_delete=on_delete,
+            )
+            logger.info("Gesture manager opened")
+        except Exception:
+            logger.exception("Failed to open gesture manager")
+
     def open_settings(self) -> None:
         """Open the settings GUI panel."""
         try:
@@ -628,6 +676,7 @@ def main(argv=None) -> None:
         set_right_click=pipeline.set_right_click,
         quit_app=lambda: shutdown(pipeline, tray),
         register_gesture=lambda: pipeline.handle_register_gesture(),
+        manage_gestures=lambda: pipeline.open_gesture_manager(),
         open_settings=lambda: pipeline.open_settings(),
     ))
 

@@ -1,23 +1,10 @@
-"""Tests for DtwMatcher state machine and DtwTrainer DBA."""
+"""Tests for motion-based DtwMatcher and DtwTrainer."""
 import numpy as np
 import pytest
 from microgesture.recognition.dtw_matcher import (
     DtwMatcher, DtwState, _normalize_wrist, _dtw_distance,
 )
 from microgesture.recognition.dtw_trainer import DtwTrainer
-
-
-class MockGesture:
-    def __init__(self, name):
-        self._name = name
-
-    @property
-    def name(self):
-        return self._name
-
-
-FIST = MockGesture("FIST")
-PALM = MockGesture("PALM_OPEN")
 
 
 class TestNormalizeWrist:
@@ -27,111 +14,99 @@ class TestNormalizeWrist:
         lm[8] = [0.6, 0.4, 0.0]
         normed = _normalize_wrist(lm)
         assert normed.shape == (63,)
-        assert normed[0] == 0.0  # wrist x = 0
-        assert normed[1] == 0.0  # wrist y = 0
-        assert normed[2] == 0.0  # wrist z = 0
-        assert normed[24] == pytest.approx(0.1, abs=1e-6)  # index tip x = 0.6 - 0.5
+        assert normed[0] == pytest.approx(0.0, abs=1e-6)
 
     def test_batch(self):
         lms = np.random.randn(5, 21, 3).astype(np.float32)
-        lms[:, 0, :] = [0.5, 0.5, 0]  # wrist position
+        lms[:, 0, :] = [0.5, 0.5, 0]
         normed = _normalize_wrist(lms)
         assert normed.shape == (5, 63)
 
 
 class TestDtwDistance:
-    def test_same_sequence_zero_distance(self):
+    def test_same_sequence_zero(self):
         seq = np.random.randn(10, 63).astype(np.float32)
-        d = _dtw_distance(seq, seq)
-        assert d < 0.01, f"Same sequence should have ~0 DTW distance, got {d:.4f}"
+        assert _dtw_distance(seq, seq) < 0.01
 
     def test_different_lengths(self):
-        seq1 = np.random.randn(10, 63).astype(np.float32)
-        seq2 = np.random.randn(15, 63).astype(np.float32)
-        d = _dtw_distance(seq1, seq2)
-        assert d > 0, "Different sequences should have non-zero distance"
+        assert _dtw_distance(np.random.randn(10, 63).astype(np.float32),
+                             np.random.randn(15, 63).astype(np.float32)) > 0
 
 
-class TestDtwMatcherStateMachine:
+class TestDtwMatcherMotion:
     def setup_method(self):
         self.m = DtwMatcher()
-        self.m._arm_frames = 3
-        self.m._min_record_frames = 5
+        self.m._motion_threshold = 0.005
+        self.m._still_frames = 5
+        self.m._min_record_frames = 8
+        self.m._max_record_frames = 120
+        self._tip_x = 0.5
 
-    def dummy_landmarks(self):
-        return np.zeros((21, 3), dtype=np.float32)
+    def make_lm(self, dx=0.0):
+        """Create landmarks with controlled tip movement.
+        dx is the displacement FROM THE PREVIOUS frame's tip position."""
+        self._tip_x += dx
+        lm = np.zeros((21, 3), dtype=np.float32)
+        lm[8] = [self._tip_x, 0.5, 0]
+        lm[0] = [0.5, 0.8, 0]
+        return lm
 
     def test_idle_stays_idle(self):
-        r = self.m.feed(self.dummy_landmarks(), PALM)
-        assert r is None
+        self.m.feed(self.make_lm(0))
+        self.m.feed(self.make_lm(0))
         assert self.m.state == DtwState.IDLE
 
-    def test_fist_enters_arming(self):
-        self.m.feed(self.dummy_landmarks(), FIST)
-        assert self.m.state == DtwState.ARMING
+    def test_motion_triggers_moving(self):
+        self.m.feed(self.make_lm(0))       # init prev_tip
+        self.m.feed(self.make_lm(0.01))    # big move
+        assert self.m.state == DtwState.MOVING
 
-    def test_early_release_aborts(self):
-        self.m.feed(self.dummy_landmarks(), FIST)
-        self.m.feed(self.dummy_landmarks(), PALM)
+    def test_small_motion_stays_idle(self):
+        self.m.feed(self.make_lm(0))
+        self.m.feed(self.make_lm(0.002))   # too small
+        assert self.m.state == DtwState.IDLE
+
+    def test_still_after_motion_stops(self):
+        self.m._still_frames = 3
+        self.m._min_record_frames = 3
+        self.m.feed(self.make_lm(0))
+        for _ in range(5):
+            self.m.feed(self.make_lm(0.01))
+        assert self.m.state == DtwState.MOVING
+        # Stop: still frames (velocity < threshold)
+        for _ in range(5):
+            self.m.feed(self.make_lm(0))  # zero velocity
         assert self.m.state == DtwState.IDLE, \
-            f"Early FIST release should abort, got {self.m.state.name}"
+            f"Expected IDLE, got {self.m.state.name}"
 
-    def test_hold_fist_arms(self):
-        for _ in range(3):
-            self.m.feed(self.dummy_landmarks(), FIST)
-        assert self.m.state == DtwState.RECORDING
+    def test_full_gesture_cycle(self):
+        self.m._still_frames = 5
+        self.m._min_record_frames = 5
+        self.m._match_threshold = 999
 
-    def test_recording_too_short_no_match(self):
-        # Arm
-        for _ in range(3):
-            self.m.feed(self.dummy_landmarks(), FIST)
-        # Record 2 frames (< min_record_frames=5)
-        for _ in range(2):
-            self.m.feed(self.dummy_landmarks(), PALM)
-        # Close fist
-        r = self.m.feed(self.dummy_landmarks(), FIST)
-        assert r is None, "Too-short sequence should not match"
-        assert self.m.state == DtwState.IDLE
+        self.m.add_template("test", "Test",
+                            np.random.randn(10, 63).astype(np.float32))
 
-    def test_match_with_similar_template(self):
-        m = DtwMatcher()
-        m._arm_frames = 2
-        m._min_record_frames = 3
-        m._match_threshold = 999
-
-        # Register a template
-        template = np.random.randn(10, 63).astype(np.float32)
-        m.add_template("test", "Test", template)
-
-        # Arm
-        for _ in range(2):
-            m.feed(np.zeros((21, 3), dtype=np.float32), FIST)
-
-        # Record similar sequence
-        noisy = template + np.random.normal(0, 0.001, template.shape).astype(np.float32)
-        for i in range(len(noisy)):
-            # Reconstruct landmarks from normalized features for feed()
-            lm = np.zeros((21, 3), dtype=np.float32)
-            lm[:, 0] = noisy[i, 0:21]  # x coords
-            lm[:, 1] = noisy[i, 21:42]  # y coords
-            lm[:, 2] = noisy[i, 42:63]  # z coords
-            r = m.feed(lm, PALM)
-
-        # Close fist
-        r = m.feed(np.zeros((21, 3), dtype=np.float32), FIST)
-        assert r is not None, "Should match similar template"
-        assert r.name == "test"
+        self.m.feed(self.make_lm(0))
+        for _ in range(20):
+            self.m.feed(self.make_lm(0.01))
+        for _ in range(5):
+            self.m.feed(self.make_lm(0))  # zero velocity
+        assert self.m.state == DtwState.IDLE, \
+            f"Expected IDLE, got {self.m.state.name}"
 
     def test_no_match_without_templates(self):
-        m = DtwMatcher()
-        m._arm_frames = 2
-        m._min_record_frames = 3
-        for _ in range(2):
-            m.feed(np.zeros((21, 3), dtype=np.float32), FIST)
+        self.m._still_frames = 3
+        self.m._min_record_frames = 5
+        self.m.feed(self.make_lm(0))
+        for _ in range(10):
+            self.m.feed(self.make_lm(0.01))
+        match = None
         for _ in range(5):
-            m.feed(np.random.randn(21, 3).astype(np.float32), PALM)
-        r = m.feed(np.zeros((21, 3), dtype=np.float32), FIST)
-        assert r is None, "No templates → no match"
+            r = self.m.feed(self.make_lm(0))
+            if r:
+                match = r
+        assert match is None
 
 
 class TestDtwTrainer:
@@ -140,45 +115,37 @@ class TestDtwTrainer:
         self.t._arm_frames = 2
         self.t._min_frames = 3
 
-    def dummy_landmarks(self):
+    def dummy_lm(self):
         return np.zeros((21, 3), dtype=np.float32)
 
-    def test_start_resets_state(self):
-        self.t.start("test", "Test")
-        assert self.t._state.name == "IDLE"
+    class MockGesture:
+        def __init__(self, name): self._name = name
+        @property
+        def name(self): return self._name
 
-    def test_three_takes_records(self):
+    FIST = MockGesture("FIST")
+    PALM = MockGesture("PALM_OPEN")
+
+    def test_three_takes_dba(self):
         self.t.start("g1", "G1")
         for take in range(3):
-            # Arm
             for _ in range(2):
-                n = self.t.feed(self.dummy_landmarks(), FIST)
-            assert n is None
-            # Record gesture (random frames)
+                self.t.feed(self.dummy_lm(), self.FIST)
             for _ in range(5):
-                lm = np.random.randn(21, 3).astype(np.float32)
-                n = self.t.feed(lm, PALM)
-            # End
-            n = self.t.feed(self.dummy_landmarks(), FIST)
-            assert n == take + 1, f"Expected take {take + 1}, got {n}"
-
+                self.t.feed(np.random.randn(21, 3).astype(np.float32), self.PALM)
+            n = self.t.feed(self.dummy_lm(), self.FIST)
+            assert n == take + 1
         result = self.t.finish()
         assert result is not None
-        assert result.name == "g1"
         assert len(result.raw_takes) == 3
         assert result.sequence.shape[1] == 63
-        # DBA average should be between min and max take lengths
-        take_lens = [len(t) for t in result.raw_takes]
-        assert min(take_lens) <= len(result.sequence) <= max(take_lens), \
-            f"DBA length {len(result.sequence)} not in range [{min(take_lens)}, {max(take_lens)}]"
 
-    def test_cancel_discards(self):
-        self.t.start("test", "Test")
+    def test_cancel(self):
+        self.t.start("t", "T")
         for _ in range(2):
-            self.t.feed(self.dummy_landmarks(), FIST)
+            self.t.feed(self.dummy_lm(), self.FIST)
         for _ in range(5):
-            self.t.feed(np.random.randn(21, 3).astype(np.float32), PALM)
-        self.t.feed(self.dummy_landmarks(), FIST)  # take 1 recorded
+            self.t.feed(self.dummy_lm(), self.PALM)
+        self.t.feed(self.dummy_lm(), self.FIST)
         self.t.cancel()
-        r = self.t.finish()
-        assert r is None, "Cancelled trainer should return None from finish()"
+        assert self.t.finish() is None

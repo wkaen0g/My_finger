@@ -53,7 +53,8 @@
         "backup_count": 5
     },
     "dtw": {
-        "arm_frames": 15,
+        "motion_threshold": 0.005,
+        "still_frames": 10,
         "max_record_frames": 120,
         "min_record_frames": 15,
         "dtw_radius": 10,
