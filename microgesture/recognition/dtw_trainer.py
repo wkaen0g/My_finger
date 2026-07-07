@@ -50,7 +50,7 @@ class DtwTrainer:
     """
 
     TAKES_REQUIRED = 3
-    READY_SECONDS = 2
+    READY_SECONDS = 5
 
     def __init__(self, config=None):
         self._state = TrainerState.IDLE
