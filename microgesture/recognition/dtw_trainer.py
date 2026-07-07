@@ -232,6 +232,9 @@ def _get_dtw_path(seq1, seq2, radius=10):
         from fastdtw import fastdtw
         return fastdtw(seq1, seq2, radius=radius)
     except ImportError:
+        if not getattr(_get_dtw_path, "_warned", False):
+            logger.warning("fastdtw not available, DBA alignment degraded (install: pip install fastdtw)")
+            _get_dtw_path._warned = True
         n1, n2 = len(seq1), len(seq2)
         path = [(min(i, n1 - 1), min(i, n2 - 1)) for i in range(max(n1, n2))]
         return _dtw_distance(seq1, seq2, radius=radius), path

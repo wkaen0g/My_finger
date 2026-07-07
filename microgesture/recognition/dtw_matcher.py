@@ -19,6 +19,7 @@ from typing import Any, Optional
 import numpy as np
 
 logger = logging.getLogger(__name__)
+TRACE = 5  # per-frame detail, below DEBUG (10)
 
 
 # ── data types ────────────────────────────────────────────────────────────────
@@ -57,9 +58,12 @@ def _dtw_distance(seq1: np.ndarray, seq2: np.ndarray, radius: int = 10) -> float
     """Path-length-normalized DTW distance between two landmark sequences."""
     try:
         from fastdtw import fastdtw
-        distance, path = fastdtw(seq1, seq2, radius=radius)
-        return distance / max(len(path), 1)
+        distance, _path = fastdtw(seq1, seq2, radius=radius)
+        return distance / max(len(_path), 1)
     except ImportError:
+        if not getattr(_dtw_distance, "_warned", False):
+            logger.warning("fastdtw not available, using Euclidean distance (install: pip install fastdtw)")
+            _dtw_distance._warned = True
         n1, n2 = len(seq1), len(seq2)
         if n1 < n2:
             seq1 = np.concatenate([seq1, np.tile(seq1[-1:], (n2 - n1, 1))])
@@ -195,7 +199,7 @@ class DtwMatcher:
         if not is_moving:
             self._still_counter = 1
             self._state = DtwState.STILL
-            logger.debug("DTW: MOVING → STILL (motion stopped)")
+            logger.log(TRACE, "DTW: MOVING → STILL (motion stopped)")
 
         return None
 

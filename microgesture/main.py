@@ -4,6 +4,7 @@ import argparse
 import logging
 import logging.handlers
 import os
+import queue
 import signal
 import sys
 import threading
@@ -58,15 +59,24 @@ def _cjk_text(img: np.ndarray, text: str, xy, font_size: int,
     return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
 
-def setup_logging(config, debug: bool = False) -> None:
+def setup_logging(config, debug: bool = False, trace: bool = False) -> None:
     log_dir = Path(config.get("logging", "dir", default="logs"))
     if not log_dir.is_absolute():
         log_dir = Path(__file__).parent / log_dir
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "microgesture.log"
 
-    level_name = "DEBUG" if debug else config.get("logging", "level", default="INFO")
-    level = getattr(logging, level_name, logging.INFO)
+    # Custom TRACE level (5): per-frame detail below DEBUG (10)
+    TRACE = 5
+    logging.addLevelName(TRACE, "TRACE")
+
+    if trace:
+        level = TRACE
+    elif debug:
+        level = logging.DEBUG
+    else:
+        level_name = config.get("logging", "level", default="INFO")
+        level = getattr(logging, level_name, logging.INFO)
     max_bytes = config.get("logging", "max_bytes", default=10_485_760)
     backup_count = config.get("logging", "backup_count", default=5)
 
@@ -112,13 +122,33 @@ class GesturePipeline:
 
         # ── Shared Tk root for all UI panels ────────────────────────────
         # Tk() and mainloop() MUST run in the same thread (Windows COM apartment).
+        # Cross-thread UI requests use a thread-safe queue + after() polling.
         tk_ready = threading.Event()
+        self._ui_queue: queue.Queue = queue.Queue()
 
         def _tk_thread():
             import tkinter as tk
             root = tk.Tk()
             root.withdraw()
             self._tk_root = root
+
+            def _poll_ui_queue():
+                """Drain the UI queue on the tk thread (thread-safe)."""
+                while True:
+                    try:
+                        cmd, *args = self._ui_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    try:
+                        if cmd == "open_control_panel":
+                            self._do_open_control_panel()
+                        elif cmd == "stop":
+                            root.quit()
+                    except Exception:
+                        logger.exception("UI queue handler error for %s", cmd)
+                root.after(50, _poll_ui_queue)
+
+            root.after(50, _poll_ui_queue)
             tk_ready.set()
             root.mainloop()
 
@@ -141,13 +171,18 @@ class GesturePipeline:
             min_tracking_confidence=config.get("mediapipe", "min_tracking_confidence", default=0.5),
         )
         self.engine = RuleEngine(
-            tip_mcp_open_threshold=config.get("gesture", "tip_mcp_open_threshold", default=0.25),
-            tip_mcp_fist_threshold=config.get("gesture", "tip_mcp_fist_threshold", default=0.12),
+            tip_mcp_open_threshold=config.get("gesture", "tip_mcp_open_ratio", default=0.70),
+            tip_mcp_fist_threshold=config.get("gesture", "tip_mcp_fist_ratio", default=0.45),
+            single_mid_max=config.get("gesture", "single_mid_max", default=0.60),
+            single_ring_max=config.get("gesture", "single_ring_max", default=0.55),
+            single_idx_ratio=config.get("gesture", "single_idx_ratio", default=1.3),
             pinch_threshold_ratio=config.get("gesture", "pinch_start_threshold", default=0.35),
         )
 
         # ── Phase 2: shadow-mode recognition ──────────────────────────
-        logger.info("Model: RuleEngine (geometry) — 5 gestures")
+        # Count gestures excluding NO_HAND
+        n_gestures = sum(1 for g in Gesture if g != Gesture.NO_HAND)
+        logger.info("Model: RuleEngine (geometry) — %d gestures", n_gestures)
         self._static_recognizer = StaticClassifier(self.engine)
         self._onnx_recognizer: GestureRecognizer | None = None
         self._shadow_threshold = config.get("system", "shadow_confidence_threshold", default=0.90)
@@ -165,14 +200,22 @@ class GesturePipeline:
             logger.info("Model: ONNX not found at %s — rules only", onnx_path)
 
         self.tap = AirTapDetector(
-            tap_threshold=config.get("gesture", "tap_threshold", default=0.3),
-            min_bend=config.get("gesture", "tap_min_bend", default=0.15),
+            tap_threshold=config.get("gesture", "tap_threshold", default=0.20),
+            min_bend=config.get("gesture", "tap_min_bend", default=0.10),
             suppress_threshold=config.get("gesture", "tap_suppress_threshold", default=0.1),
             bend_timeout=config.get("gesture", "tap_bend_timeout", default=12),
             rebound_timeout=config.get("gesture", "tap_rebound_timeout", default=12),
             cooldown_frames=config.get("gesture", "tap_cooldown_frames", default=8),
         )
         self._tap_result: TapResult | None = None
+        # ── Tap arm/disarm state machine ────────────────────────────────
+        # When a tap-capable gesture is detected, we "arm" for N frames.
+        # Even if the gesture drops during the bending motion, tap events
+        # are still consumed while armed.  Successful tap → immediate disarm.
+        self._armed_tap = False
+        self._armed_right = False
+        self._armed_frames = 0
+        self._ARMED_MAX = 15  # frames (~0.5s) to hold the arm after gesture loss
         self.pinch = PinchDetector(
             pinch_threshold_ratio=config.get("gesture", "pinch_start_threshold", default=0.35),
             release_threshold_ratio=config.get("gesture", "pinch_release_threshold", default=0.55),
@@ -307,6 +350,8 @@ class GesturePipeline:
                 f"DZ:{dz_mode}",
                 f"{self._inference_source.upper()}:{self._onnx_conf:.2f}" if self._onnx_recognizer else "RULE",
             ]
+            if self._armed_tap:
+                diag_lines.append(f"ARMED:{'R' if self._armed_right else 'L'} {self._ARMED_MAX - self._armed_frames}")
             y_off = 50
             for line in diag_lines:
                 display = _cjk_text(display, line, (w - 10, y_off), 16,
@@ -355,7 +400,6 @@ class GesturePipeline:
             if lost_time > 1.0:
                 logger.info("Hand re-detected after %.1fs", lost_time)
         self._no_hand_start = None
-        self._tap_result = self.tap.update(hand.landmarks)
 
         # ── Phase 2: shadow recognition ───────────────────────────────
         rule_result = self._static_recognizer.predict(hand.landmarks)
@@ -393,6 +437,32 @@ class GesturePipeline:
         if gesture == Gesture.PALM_OPEN or gesture == Gesture.PINCH:
             self._fist_start = None
 
+        # ── Tap detection: active for SINGLE_FINGER (left-click) and
+        # FIST (right-click, when right_click_mode == "fist_tap").
+        # Gated to prevent false-positives during PALM_OPEN cursor movement.
+        if gesture == Gesture.SINGLE_FINGER:
+            self._tap_result = self.tap.update(hand.landmarks)
+        elif gesture == Gesture.FIST and self._right_click_mode == "fist_tap":
+            self._tap_result = self.tap.update(hand.landmarks)
+        else:
+            self._tap_result = None
+
+        # ── Tap arm/disarm logic ───────────────────────────────────────
+        # When a tap-capable gesture appears, arm the tap latch so that
+        # the bending motion doesn't cause the tap event to be lost.
+        if gesture == Gesture.SINGLE_FINGER:
+            self._armed_tap = True
+            self._armed_right = False
+            self._armed_frames = 0
+        elif gesture == Gesture.FIST and self._right_click_mode == "fist_tap":
+            self._armed_tap = True
+            self._armed_right = True
+            self._armed_frames = 0
+        elif self._armed_tap:
+            self._armed_frames += 1
+            if self._armed_frames > self._ARMED_MAX:
+                self._armed_tap = False
+
         # ── Phase 3: DTW training mode ──────────────────────────────────
         if self._trainer_event.is_set() and self._dtw_trainer is not None:
             take_num, status_msg = self._dtw_trainer.feed(hand.landmarks)
@@ -429,8 +499,11 @@ class GesturePipeline:
         if gesture == Gesture.PALM_OPEN:
             self.cursor.unfreeze()
             self._handle_cursor_move(hand.landmarks)
-            # Tap removed from PALM_OPEN — only SINGLE_FINGER triggers tap
             self._handle_pinch(hand.landmarks)
+            # Armed tap: SINGLE_FINGER may have dropped during bending, but
+            # the tap latch keeps us looking for the rebound event.
+            if self._armed_tap:
+                self._handle_tap(right_click=self._armed_right)
 
         elif gesture == Gesture.SINGLE_FINGER:
             self.cursor.freeze()
@@ -487,8 +560,12 @@ class GesturePipeline:
             return
         if right_click:
             self.input_ctrl.right_click()
+            logger.info("点击触发: 右键")
         else:
             self.input_ctrl.click()
+            logger.info("点击触发: 左键")
+        # Tap consumed — disarm immediately to prevent double-fires
+        self._armed_tap = False
 
     def _handle_pinch(self, landmarks) -> None:
         event = self.pinch.update(landmarks)
@@ -713,7 +790,7 @@ class GesturePipeline:
 
     def open_control_panel(self) -> None:
         """Schedule control panel creation on the tk thread (thread-safe)."""
-        self._tk_root.after(0, self._do_open_control_panel)
+        self._ui_queue.put(("open_control_panel",))
 
     def start(self) -> None:
         self._running = True
@@ -740,13 +817,14 @@ def parse_args(argv=None):
     parser.add_argument("--config", type=Path, help="Path to an alternate config file")
     parser.add_argument("--no-watch", action="store_true", help="Disable config file watcher")
     parser.add_argument("--debug", action="store_true", help="Enable DEBUG-level logging")
+    parser.add_argument("--trace", action="store_true", help="Enable TRACE-level logging (per-frame detail)")
     return parser.parse_args(argv)
 
 
 def main(argv=None) -> None:
     args = parse_args(argv)
     config = get_config(args.config, watch=not args.no_watch)
-    setup_logging(config, debug=args.debug)
+    setup_logging(config, debug=args.debug, trace=args.trace)
 
     logger.info("MicroGesture v0.1.0 starting")
 

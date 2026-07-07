@@ -8,6 +8,7 @@ from typing import Optional
 import numpy as np
 
 logger = logging.getLogger(__name__)
+TRACE = 5  # per-frame detail, below DEBUG (10)
 
 
 class Gesture(Enum):
@@ -42,18 +43,35 @@ class RuleEngine:
 
     def __init__(self, tip_mcp_open_threshold: float = 0.25,
                  tip_mcp_fist_threshold: float = 0.12,
-                 pinch_threshold_ratio: float = 0.35):
+                 pinch_threshold_ratio: float = 0.35,
+                 single_mid_max: float = 0.6,
+                 single_ring_max: float = 0.55,
+                 single_idx_ratio: float = 1.3):
         self.open_threshold = tip_mcp_open_threshold
         self.fist_threshold = tip_mcp_fist_threshold
         self.pinch_ratio = pinch_threshold_ratio
+        # Relaxed bounds for SINGLE_FINGER — middle/ring naturally couple
+        # with index extension (shared tendons).  Pinky uses fist_threshold.
+        self.single_mid_max = single_mid_max
+        self.single_ring_max = single_ring_max
+        # Index must be clearly dominant over middle (prevents TWO_FINGER
+        # with both fingers half-extended from being misclassified).
+        self.single_idx_ratio = single_idx_ratio
         self._frame = 0
 
     def classify(self, landmarks: np.ndarray) -> GestureResult:
-        """Classify hand landmarks into a gesture category."""
+        """Classify hand landmarks into a gesture category.
+
+        All tip-MCP distances are normalized by hand_scale
+        (wrist → middle-MCP) to be camera-distance invariant.
+        """
         self._frame += 1
+        hand_scale = np.linalg.norm(landmarks[WRIST] - landmarks[MIDDLE_MCP])
+        if hand_scale < 1e-6:
+            hand_scale = 1.0
         distances = []
         for tip_idx, mcp_idx in zip(TIP, MCP):
-            d = np.linalg.norm(landmarks[tip_idx] - landmarks[mcp_idx])
+            d = np.linalg.norm(landmarks[tip_idx] - landmarks[mcp_idx]) / hand_scale
             distances.append(d)
 
         open_count = sum(1 for d in distances if d > self.open_threshold)
@@ -66,31 +84,42 @@ class RuleEngine:
                 f"({'伸' if d > self.open_threshold else '屈' if d < self.fist_threshold else '半'})"
                 for i, (n, d) in enumerate(zip(self._FINGER_NAMES, distances))
             )
-            logger.debug("指尖-MCP距离: %s | 伸=%d 屈=%d", parts, open_count, closed_count)
+            logger.log(TRACE, "指尖-MCP距离: %s | 伸=%d 屈=%d", parts, open_count, closed_count)
 
-        # Single-finger: index extended, other 4 curled.
-        # Check BEFORE FIST — it's more specific (4 curled + 1 open).
+        # Single-finger: index extended, other fingers mostly curled.
+        # Check BEFORE FIST — it's more specific.
+        # - index must be extended (> open_threshold)
+        # - index must be clearly dominant over middle (ratio > single_idx_ratio)
+        #   prevents TWO_FINGER with both half-extended from misclassification
+        # - middle/ring use relaxed bounds (tendon coupling with index)
+        # - pinky uses strict fist_threshold (least coupling)
+        # - thumb NOT checked (independent movement, opens reflexively)
         idx_open = distances[1] > self.open_threshold
-        mid_closed = distances[2] < self.fist_threshold
-        ring_closed = distances[3] < self.fist_threshold
-        pinky_closed = distances[4] < self.fist_threshold
-        thumb_closed = distances[0] < self.fist_threshold
-        if idx_open and mid_closed and ring_closed and pinky_closed and thumb_closed:
+        idx_dominant = distances[1] > distances[2] * self.single_idx_ratio
+        mid_ok = distances[2] < self.single_mid_max
+        ring_ok = distances[3] < self.single_ring_max
+        pinky_ok = distances[4] < self.fist_threshold
+        if idx_open and idx_dominant and mid_ok and ring_ok and pinky_ok:
             return GestureResult(Gesture.SINGLE_FINGER, landmarks, 0.9)
 
         # Fist: majority voting — 4+ fingers curled.
         # Must precede PINCH because a fist has thumb close to index,
         # which would otherwise trigger the pinch threshold.
+        # Guard: if index is clearly the dominant (most extended) finger,
+        # the user is likely doing SINGLE_FINGER with index temporarily
+        # bent during a tap — don't steal it.
         if closed_count >= 4:
-            return GestureResult(Gesture.FIST, landmarks, 0.9)
+            others_max = max(distances[0], distances[2], distances[3], distances[4])
+            idx_dominant = distances[1] > others_max * 1.5
+            if not idx_dominant:
+                return GestureResult(Gesture.FIST, landmarks, 0.9)
 
         # Pinch: thumb and index tips are close together
         pinch_dist = np.linalg.norm(landmarks[THUMB_TIP] - landmarks[INDEX_TIP])
-        hand_scale = np.linalg.norm(landmarks[WRIST] - landmarks[MIDDLE_MCP])
-        pinch_norm = pinch_dist / hand_scale if hand_scale > 0 else 1.0
+        pinch_norm = pinch_dist / hand_scale  # reuses hand_scale from classify()
         if self._frame % 5 == 0:
-            logger.debug("捏合: dist=%.3f scale=%.3f norm=%.3f thresh=%.2f",
-                         pinch_dist, hand_scale, pinch_norm, self.pinch_ratio)
+            logger.log(TRACE, "捏合: dist=%.3f scale=%.3f norm=%.3f thresh=%.2f",
+                        pinch_dist, hand_scale, pinch_norm, self.pinch_ratio)
         # PINCH requires: tips close AND index finger NOT fully extended.
         # The "not extended" guard prevents a TWO_FINGER (peace sign) with
         # thumb curled nearby from being mis-classified as pinch.
@@ -111,5 +140,5 @@ class RuleEngine:
 
         # Unclear posture — default to palm_open for cursor tracking
         if self._frame % 5 == 0:
-            logger.debug("手势判定: PALM_OPEN (fallback, conf=0.3)")
+            logger.log(TRACE, "手势判定: PALM_OPEN (fallback, conf=0.3)")
         return GestureResult(Gesture.PALM_OPEN, landmarks, 0.3)

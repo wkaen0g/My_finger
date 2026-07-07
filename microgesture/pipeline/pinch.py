@@ -8,6 +8,7 @@ from typing import Optional
 import numpy as np
 
 logger = logging.getLogger(__name__)
+TRACE = 5  # per-frame detail, below DEBUG (10)
 
 
 class PinchState(Enum):
@@ -73,7 +74,7 @@ class PinchDetector:
                 self._stable_count = 0
 
         if self._frame % self._DEBUG_INTERVAL == 0:
-            logger.debug("捏合参数: dist=%.3f scale=%.3f norm=%.3f 开始=%.2f 释放=%.2f 状态=%s 计数=%d",
+            logger.log(TRACE, "捏合参数: dist=%.3f scale=%.3f norm=%.3f 开始=%.2f 释放=%.2f 状态=%s 计数=%d",
                          pinch_dist, hand_scale, normalized_dist,
                          self.start_threshold, self.release_threshold,
                          self._state.name, self._stable_count)

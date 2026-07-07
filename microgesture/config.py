@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import time as _time
 from pathlib import Path
 from threading import Lock, Event
 from typing import Any
@@ -27,17 +28,27 @@ class Config:
             self._start_watch()
 
     def reload(self) -> None:
-        try:
-            with open(self._path, "r", encoding="utf-8") as f:
-                new_data = json.load(f)
-            with self._lock:
-                self._data = new_data
-            logger.info("Config loaded from %s", self._path)
-        except Exception:
-            logger.exception("Failed to load config from %s", self._path)
-            with self._lock:
-                if not self._data:
-                    self._data = {}
+        """Load config from disk with retry for atomic-write safety."""
+        for attempt in range(3):
+            try:
+                with open(self._path, "r", encoding="utf-8") as f:
+                    new_data = json.load(f)
+                with self._lock:
+                    self._data = new_data
+                logger.info("Config loaded from %s", self._path)
+                return
+            except json.JSONDecodeError:
+                if attempt < 2:
+                    logger.debug("Config read retry %d/2", attempt + 1)
+                    _time.sleep(0.05 * (attempt + 1))
+                else:
+                    logger.exception("Failed to load config from %s", self._path)  # last attempt
+            except Exception:
+                logger.exception("Failed to load config from %s", self._path)
+                break  # non-JSON errors (permission, missing) — don't retry
+        with self._lock:
+            if not self._data:
+                self._data = {}
 
     def _start_watch(self) -> None:
         try:
@@ -45,12 +56,20 @@ class Config:
             from watchdog.events import FileSystemEventHandler
 
             config_self = self  # capture outer Config reference
+            _last_reload = 0.0
 
             class _ReloadHandler(FileSystemEventHandler):
                 def on_modified(self, event):
-                    if event.src_path.endswith(config_self._path.name):
-                        logger.info("Config file changed, reloading...")
-                        config_self.reload()
+                    nonlocal _last_reload
+                    if not event.src_path.endswith(config_self._path.name):
+                        return
+                    # Debounce: os.replace fires multiple events; reload at most once per 0.5s
+                    now = _time.monotonic()
+                    if now - _last_reload < 0.5:
+                        return
+                    _last_reload = now
+                    logger.info("Config file changed, reloading...")
+                    config_self.reload()
 
             self._observer = Observer()
             self._observer.schedule(

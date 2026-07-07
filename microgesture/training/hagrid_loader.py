@@ -67,45 +67,46 @@ def process_hagrid(
         min_detection_confidence=confidence_min,
         min_tracking_confidence=confidence_min,
     )
-
     total = 0
 
-    for hagrid_name, label in CLASS_MAP.items():
-        class_dir = raw_dir / hagrid_name
-        if not class_dir.is_dir():
-            logger.warning("Skipping %s — directory not found at %s", label, class_dir)
-            continue
-
-        images = sorted(class_dir.glob("*.*"))[:max_per_class]
-        if not images:
-            logger.warning("No images found for %s in %s", label, class_dir)
-            continue
-
-        features_list: list[np.ndarray] = []
-
-        for img_path in tqdm(images, desc=f"Processing {label}", unit="img"):
-            frame = cv2.imread(str(img_path))
-            if frame is None:
-                continue
-            hand = detector.detect(frame)
-            if hand is None:
+    try:
+        for hagrid_name, label in CLASS_MAP.items():
+            class_dir = raw_dir / hagrid_name
+            if not class_dir.is_dir():
+                logger.warning("Skipping %s — directory not found at %s", label, class_dir)
                 continue
 
-            features_list.append(extract_features(hand.landmarks))
+            images = sorted(class_dir.glob("*.*"))[:max_per_class]
+            if not images:
+                logger.warning("No images found for %s in %s", label, class_dir)
+                continue
 
-        if features_list:
-            stacked = np.stack(features_list)
-            np.savez_compressed(
-                out_dir / f"features_{label}.npz",
-                features=stacked,
-                label=label,
-            )
-            logger.info("%s: %d samples saved", label, len(features_list))
-            total += len(features_list)
-        else:
-            logger.warning("%s: no valid hand detections — skipping", label)
+            features_list: list[np.ndarray] = []
 
-    detector.close()
+            for img_path in tqdm(images, desc=f"Processing {label}", unit="img"):
+                frame = cv2.imread(str(img_path))
+                if frame is None:
+                    continue
+                hand = detector.detect(frame)
+                if hand is None:
+                    continue
+
+                features_list.append(extract_features(hand.landmarks))
+
+            if features_list:
+                stacked = np.stack(features_list)
+                np.savez_compressed(
+                    out_dir / f"features_{label}.npz",
+                    features=stacked,
+                    label=label,
+                )
+                logger.info("%s: %d samples saved", label, len(features_list))
+                total += len(features_list)
+            else:
+                logger.warning("%s: no valid hand detections — skipping", label)
+    finally:
+        detector.close()
+
     logger.info("HaGRID processing complete: %d total samples → %s", total, out_dir)
     return total
 

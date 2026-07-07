@@ -78,3 +78,11 @@ python -m microgesture.main
 - MediaPipe 的实际应用
 - Python 下的多线程/状态机设计
 - 基于摄像头的交互控制系统
+
+## 程序运行和日志调试
+
+终端运行：
+
+```bash
+python -m microgesture.main --trace
+```

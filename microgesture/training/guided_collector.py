@@ -74,16 +74,27 @@ def _draw_instruction(frame: np.ndarray, text: str, color,
 
 
 def run_guided_collection(data_dir: str | Path = "microgesture/training/data",
-                          frames_per_gesture: int = _FRAMES_PER_GESTURE):
+                          frames_per_gesture: int = _FRAMES_PER_GESTURE,
+                          gestures: list[str] | None = None):
     """Run the guided collection flow.
 
     Args:
         data_dir: Output directory for .npz files.
         frames_per_gesture: Number of frames to record per gesture class.
                             Default 500; increase for more training data.
+        gestures: Specific gestures to collect (default: all GESTURES).
+                  e.g. ["SINGLE_FINGER"] to collect only single-finger data.
     """
     config = get_config()
     data_dir = Path(data_dir)
+
+    if gestures:
+        invalid = set(gestures) - set(GESTURES)
+        if invalid:
+            raise ValueError(f"Unknown gestures: {invalid}. Valid: {GESTURES}")
+        target_gestures = tuple(g for g in GESTURES if g in gestures)
+    else:
+        target_gestures = GESTURES
 
     capture = CameraCapture(
         device_id=config.get("camera", "device_id", default=0),
@@ -102,7 +113,7 @@ def run_guided_collection(data_dir: str | Path = "microgesture/training/data",
 
     try:
         _run_collection_loop(capture, detector, collector, data_dir,
-                             frames_per_gesture)
+                             frames_per_gesture, target_gestures)
     finally:
         capture.stop()
         detector.close()
@@ -110,14 +121,14 @@ def run_guided_collection(data_dir: str | Path = "microgesture/training/data",
 
 
 def _run_collection_loop(capture, detector, collector, data_dir,
-                         frames_per_gesture):
+                         frames_per_gesture, gestures):
     """Inner loop so cleanup always runs on exception."""
     cv2.namedWindow("Gesture Collector", cv2.WINDOW_NORMAL)
     cv2.setWindowProperty("Gesture Collector", cv2.WND_PROP_TOPMOST, 1)
 
     dummy = np.zeros((480, 640, 3), dtype=np.uint8)
 
-    for label in GESTURES:
+    for label in gestures:
         name, color = _GESTURE_CN[label]
 
         # ── Ready phase ───────────────────────────────────────────
@@ -190,11 +201,19 @@ if __name__ == "__main__":
                              "(default: microgesture/training/data)")
     parser.add_argument("--frames", type=int, default=_FRAMES_PER_GESTURE,
                         help=f"Frames per gesture class (default: {_FRAMES_PER_GESTURE})")
+    parser.add_argument("--gestures", default=None,
+                        help="Comma-separated gestures to collect (default: all). "
+                             "e.g. --gestures SINGLE_FINGER")
     args = parser.parse_args()
+
+    gesture_list = None
+    if args.gestures:
+        gesture_list = [g.strip() for g in args.gestures.split(",")]
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    run_guided_collection(args.data_dir, frames_per_gesture=args.frames)
+    run_guided_collection(args.data_dir, frames_per_gesture=args.frames,
+                          gestures=gesture_list)

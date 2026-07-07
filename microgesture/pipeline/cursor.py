@@ -6,6 +6,7 @@ from typing import Optional, Tuple
 import numpy as np
 
 logger = logging.getLogger(__name__)
+TRACE = 5  # per-frame detail, below DEBUG (10)
 
 
 class OneEuroFilter:
@@ -113,7 +114,7 @@ class CursorController:
             raw_dy = 0.0
 
         if self._frame % 5 == 0 and (raw_dx != 0 or raw_dy != 0):
-            logger.debug("光标: 感知=%.1f×%.1f 死区=%.1f",
+            logger.log(TRACE, "光标: 感知=%.1f×%.1f 死区=%.1f",
                          raw_dx, raw_dy, dz)
 
         self._prev_raw = (sx, sy)
