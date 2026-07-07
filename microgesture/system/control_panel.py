@@ -298,8 +298,8 @@ class ControlPanel:
             import time
             name = f"gesture_{time.strftime('%H%M%S')}"
             self._on_register(name, name, {"type": "key_combo", "modifiers": ["ctrl"], "key": "s"})
-            self._reg_btn.configure(state="disabled", text="Training...")
-            self._train_status.configure(text="Ready... (stay still)")
+            self._reg_btn.configure(state="disabled", text="训练中...")
+            self._train_status.configure(text="准备... (请保持静止)")
             self._poll_training()
 
     def _poll_training(self):

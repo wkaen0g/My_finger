@@ -110,13 +110,13 @@ class DtwTrainer:
         is_moving = velocity > self._motion_threshold
 
         if self._state == TrainerState.IDLE:
-            return (None, "Idle")
+            return (None, "空闲")
         elif self._state == TrainerState.READY:
             return self._handle_ready()
         elif self._state == TrainerState.RECORDING:
             return self._handle_recording(landmarks, is_moving)
         elif self._state == TrainerState.DONE:
-            return (None, f"Complete ({len(self._takes)}/3 takes)")
+            return (None, f"完成 ({len(self._takes)}/3 次)")
         return (None, "")
 
     def cancel(self) -> None:
@@ -148,15 +148,15 @@ class DtwTrainer:
             self._still_counter = 0
             self._is_moving = False
             self._prev_tip = None
-            return (None, "Go! Perform gesture now...")
-        return (None, f"Ready... {int(remaining) + 1}")
+            return (None, "开始! 做手势...")
+        return (None, f"准备... {int(remaining) + 1}")
 
     def _handle_recording(self, landmarks, is_moving) -> tuple[Optional[int], Optional[str]]:
         # Timeout
         if len(self._buffer) >= self._max_frames:
             self._buffer.clear()
             self._state = TrainerState.IDLE
-            return (None, "Timeout — try again")
+            return (None, "超时 — 请重试")
 
         if not self._is_moving and is_moving:
             self._is_moving = True
@@ -173,15 +173,15 @@ class DtwTrainer:
                 else:
                     self._buffer.clear()
                     self._state = TrainerState.IDLE
-                    return (None, f"Too short ({len(self._buffer)} frames) — retry")
+                    return (None, f"太短 ({len(self._buffer)} 帧) — 请重试")
         else:
             self._still_counter = 0
 
         buf_len = len(self._buffer)
         if self._is_moving:
-            return (None, f"Recording... {buf_len} frames")
+            return (None, f"录制中... {buf_len} 帧")
         else:
-            return (None, "Wait for motion...")
+            return (None, "等待动作...")
 
     def _save_take(self) -> tuple[Optional[int], Optional[str]]:
         seq = np.stack(list(self._buffer))
@@ -197,11 +197,11 @@ class DtwTrainer:
 
         if take_num >= self.TAKES_REQUIRED:
             self._state = TrainerState.DONE
-            return (take_num, f"Take {take_num}/3 — Complete!")
+            return (take_num, f"第{take_num}/3次 — 完成!")
         else:
             self._state = TrainerState.READY
             self._ready_end = time.time() + self.READY_SECONDS
-            return (take_num, f"Take {take_num}/3 — Get ready...")
+            return (take_num, f"第{take_num}/3次 — 准备...")
 
     # ── DBA ───────────────────────────────────────────────────────────────────
 
