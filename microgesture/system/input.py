@@ -10,9 +10,11 @@ logger = logging.getLogger(__name__)
 
 _user32 = ctypes.windll.user32
 
-# Screen metrics
-_SM_CXSCREEN = 0
-_SM_CYSCREEN = 1
+# Screen metrics (virtual desktop = all monitors combined)
+_SM_XVIRTUALSCREEN = 76
+_SM_YVIRTUALSCREEN = 77
+_SM_CXVIRTUALSCREEN = 78
+_SM_CYVIRTUALSCREEN = 79
 
 # Mouse event flags
 _MOUSEEVENTF_LEFTDOWN = 0x0002
@@ -85,8 +87,11 @@ class InputController:
 
     def __init__(self):
         self._dragging = False
-        self._screen_w = _user32.GetSystemMetrics(_SM_CXSCREEN)
-        self._screen_h = _user32.GetSystemMetrics(_SM_CYSCREEN)
+        # Virtual desktop = bounding rect of all monitors
+        self._screen_x = _user32.GetSystemMetrics(_SM_XVIRTUALSCREEN)
+        self._screen_y = _user32.GetSystemMetrics(_SM_YVIRTUALSCREEN)
+        self._screen_w = _user32.GetSystemMetrics(_SM_CXVIRTUALSCREEN)
+        self._screen_h = _user32.GetSystemMetrics(_SM_CYVIRTUALSCREEN)
 
     # ── cursor ────────────────────────────────────────────────────────
 
@@ -99,9 +104,9 @@ class InputController:
         x, y = _get_cursor_pos()
         nx, ny = x + idx, y + idy
 
-        # Soft boundary: clamp to screen, log if near edge
-        nx = max(0, min(self._screen_w - 1, nx))
-        ny = max(0, min(self._screen_h - 1, ny))
+        # Soft boundary: clamp to virtual desktop
+        nx = max(self._screen_x, min(self._screen_x + self._screen_w - 1, nx))
+        ny = max(self._screen_y, min(self._screen_y + self._screen_h - 1, ny))
 
         _user32.SetCursorPos(nx, ny)
 

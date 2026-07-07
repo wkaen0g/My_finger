@@ -161,8 +161,9 @@ class GesturePipeline:
             release_threshold_ratio=config.get("gesture", "pinch_release_threshold", default=0.55),
         )
         try:
-            sw = ctypes.windll.user32.GetSystemMetrics(0)
-            sh = ctypes.windll.user32.GetSystemMetrics(1)
+            # Virtual desktop = all monitors combined
+            sw = ctypes.windll.user32.GetSystemMetrics(78)  # SM_CXVIRTUALSCREEN
+            sh = ctypes.windll.user32.GetSystemMetrics(79)  # SM_CYVIRTUALSCREEN
         except Exception:
             sw, sh = 1920, 1080
             logger.info("Fallback screen dimensions used: %dx%d", sw, sh)
