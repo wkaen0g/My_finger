@@ -4,7 +4,7 @@ import pytest
 from microgesture.recognition.dtw_matcher import (
     DtwMatcher, DtwState, _normalize_wrist, _dtw_distance,
 )
-from microgesture.recognition.dtw_trainer import DtwTrainer
+from microgesture.recognition.dtw_trainer import DtwTrainer, TrainerState
 
 
 class TestNormalizeWrist:
@@ -112,29 +112,40 @@ class TestDtwMatcherMotion:
 class TestDtwTrainer:
     def setup_method(self):
         self.t = DtwTrainer()
-        self.t._arm_frames = 2
-        self.t._min_frames = 3
+        self.t._motion_threshold = 0.005
+        self.t._still_frames = 3
+        self.t._min_frames = 5
+        self.t._max_frames = 120
+        self.t.READY_SECONDS = 0  # skip countdown
 
-    def dummy_lm(self):
-        return np.zeros((21, 3), dtype=np.float32)
-
-    class MockGesture:
-        def __init__(self, name): self._name = name
-        @property
-        def name(self): return self._name
-
-    FIST = MockGesture("FIST")
-    PALM = MockGesture("PALM_OPEN")
+    def still_lm(self):
+        lm = np.zeros((21, 3), dtype=np.float32)
+        lm[8] = [0.5, 0.5, 0]
+        lm[0] = [0.5, 0.8, 0]
+        return lm
 
     def test_three_takes_dba(self):
         self.t.start("g1", "G1")
+        # Use controlled tip movement: start at 0.5, move right, stop
         for take in range(3):
-            for _ in range(2):
-                self.t.feed(self.dummy_lm(), self.FIST)
-            for _ in range(5):
-                self.t.feed(np.random.randn(21, 3).astype(np.float32), self.PALM)
-            n = self.t.feed(self.dummy_lm(), self.FIST)
-            assert n == take + 1
+            self.t._state = TrainerState.RECORDING
+            self.t._buffer.clear()
+            self.t._prev_tip = None
+            self.t._still_counter = 0
+            self.t._is_moving = True  # skip the "wait for motion" phase
+            # Move: 10 frames, tip moves right
+            for i in range(10):
+                lm = np.zeros((21, 3), dtype=np.float32)
+                lm[8] = [0.5 + i * 0.01, 0.5, 0]
+                lm[0] = [0.5, 0.8, 0]
+                n, _ = self.t.feed(lm)
+            # Still: 3 frames, same tip position
+            for _ in range(3):
+                lm = np.zeros((21, 3), dtype=np.float32)
+                lm[8] = [0.5 + 0.09, 0.5, 0]  # same as last moving frame
+                lm[0] = [0.5, 0.8, 0]
+                n, _ = self.t.feed(lm)
+            assert n == take + 1, f"Expected take {take + 1}, got {n}"
         result = self.t.finish()
         assert result is not None
         assert len(result.raw_takes) == 3
@@ -142,10 +153,12 @@ class TestDtwTrainer:
 
     def test_cancel(self):
         self.t.start("t", "T")
-        for _ in range(2):
-            self.t.feed(self.dummy_lm(), self.FIST)
-        for _ in range(5):
-            self.t.feed(self.dummy_lm(), self.PALM)
-        self.t.feed(self.dummy_lm(), self.FIST)
+        self.t._state = TrainerState.RECORDING
+        self.t._is_moving = True
+        for i in range(8):
+            lm = np.zeros((21, 3), dtype=np.float32)
+            lm[8] = [0.5 + i * 0.01, 0.5, 0]
+            lm[0] = [0.5, 0.8, 0]
+            self.t.feed(lm)
         self.t.cancel()
         assert self.t.finish() is None

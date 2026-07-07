@@ -392,10 +392,11 @@ class GesturePipeline:
 
         # ── Phase 3: DTW training mode ──────────────────────────────────
         if self._trainer_event.is_set() and self._dtw_trainer is not None:
-            take_num = self._dtw_trainer.feed(hand.landmarks, gesture)
+            take_num, status_msg = self._dtw_trainer.feed(hand.landmarks)
+            if status_msg:
+                self._dtw_status = status_msg
             if take_num is not None:
                 self._trainer_take = take_num
-                self._dtw_status = f"训练: 第{take_num}/3次"
                 logger.info("DTW training: take %d/3 recorded", take_num)
                 if take_num >= 3:
                     result = self._dtw_trainer.finish()
@@ -523,7 +524,7 @@ class GesturePipeline:
         self._trainer_label = label
         self._trainer_action = action_config
         self._trainer_take = 0
-        self._dtw_status = "训练: 握拳开始录制..."
+        self._dtw_status = "Ready..."
         self._dtw_trainer.start(name, label)
         logger.info("DTW training started: name=%s label=%s action=%s",
                     name, label, action_config)
