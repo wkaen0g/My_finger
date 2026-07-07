@@ -316,7 +316,7 @@ class GesturePipeline:
                 buf = self._dtw_matcher.buffer_size
                 status = self._dtw_status if self._dtw_status else f"{state_name}[{buf}]"
                 display = _cjk_text(display, f"DTW: {status}", (w - 10, 10), 18,
-                                    (0, 255, 255), anchor="ra")
+                                    (0, 0, 255), anchor="ra")
                 if self._dtw_matcher.template_count > 0:
                     cv2.putText(display, f"{self._dtw_matcher.template_count} templates",
                                 (w - 10, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.4,
