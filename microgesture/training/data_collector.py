@@ -77,8 +77,15 @@ class DataCollector:
         features = extract_features(landmarks)
         self._samples.append((features, self._current_label))
 
-    def save(self, directory: str | Path) -> Path:
-        """Persist samples to `directory/gesture_*.npz` and metadata.json."""
+    def save(self, directory: str | Path, merge: bool = True) -> Path:
+        """Persist samples to `directory/gesture_*.npz` and metadata.json.
+
+        Args:
+            directory: Output directory.
+            merge: If True, merge new samples with existing .npz files
+                   (enables incremental data collection across sessions).
+                   If False, overwrite existing files.
+        """
         directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
 
@@ -88,15 +95,40 @@ class DataCollector:
             by_label.setdefault(label, []).append(features)
 
         for label, feats in by_label.items():
-            stacked = np.stack(feats)
+            stacked_new = np.stack(feats)
+
+            if merge:
+                existing_path = directory / f"features_{label}.npz"
+                if existing_path.exists():
+                    existing = np.load(existing_path)
+                    stacked_old = existing["features"]
+                    stacked = np.concatenate([stacked_old, stacked_new])
+                    logger.info("Merged %s: %d + %d = %d samples",
+                                label, len(stacked_old), len(stacked_new), len(stacked))
+                else:
+                    stacked = stacked_new
+                    logger.info("Saved %s: %d samples", label, len(stacked))
+            else:
+                stacked = stacked_new
+                logger.info("Saved %s: %d samples → %s", label, len(stacked),
+                            f"features_{label}.npz")
+
             path = directory / f"features_{label}.npz"
             np.savez_compressed(path, features=stacked, label=label)
-            logger.info("Saved %s: %d samples → %s", label, len(feats), path.name)
 
-        meta = {label: len(by_label.get(label, [])) for label in GESTURES}
+        # Update metadata with actual file contents
+        meta = {}
+        for label in GESTURES:
+            path = directory / f"features_{label}.npz"
+            if path.exists():
+                meta[label] = np.load(path)["features"].shape[0]
+            else:
+                meta[label] = len(by_label.get(label, []))
+        meta["_total"] = sum(meta.values())
+        meta["_updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
         meta_path = directory / "metadata.json"
         meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False))
-        logger.info("Metadata → %s", meta_path)
+        logger.info("Metadata → %s (total=%d)", meta_path, meta["_total"])
 
         self._samples.clear()
         return directory
