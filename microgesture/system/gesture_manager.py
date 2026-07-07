@@ -93,6 +93,9 @@ class GestureManager:
         self._root.geometry("420x480")
         self._refresh()
         self._poll()
+        # Daemon thread for tkinter event loop (avoids pystray conflict)
+        import threading
+        threading.Thread(target=self._root.mainloop, daemon=True).start()
 
     # ── refresh ──────────────────────────────────────────────────────────
 

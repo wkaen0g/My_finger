@@ -86,6 +86,9 @@ class SettingsPanel:
         ttk.Button(btn_frame, text="Close", command=self._on_close).pack(side=tk.LEFT)
 
         self._root.geometry("360x440")
+        # Daemon thread for tkinter event loop (avoids pystray conflict)
+        import threading
+        threading.Thread(target=self._root.mainloop, daemon=True).start()
 
     # ── helpers ──────────────────────────────────────────────────────────
 
