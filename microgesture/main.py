@@ -108,6 +108,7 @@ class GesturePipeline:
         self.config = config
         self._running = False
         self._tracking = True
+        self._tracking_lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._on_status_change = on_status_change
         self._last_camera_ok = False
@@ -203,7 +204,7 @@ class GesturePipeline:
         # ── Phase 3: DTW custom gesture matching ───────────────────────
         self._dtw_matcher = None
         self._dtw_trainer = None
-        self._trainer_requested = False
+        self._trainer_event = threading.Event()
         self._trainer_label = ""
         self._trainer_action: dict = {}
         self._trainer_take = 0
@@ -374,7 +375,7 @@ class GesturePipeline:
             self._fist_start = None
 
         # ── Phase 3: DTW training mode ──────────────────────────────────
-        if self._trainer_requested and self._dtw_trainer is not None:
+        if self._trainer_event.is_set() and self._dtw_trainer is not None:
             take_num = self._dtw_trainer.feed(hand.landmarks, gesture)
             if take_num is not None:
                 self._trainer_take = take_num
@@ -390,7 +391,7 @@ class GesturePipeline:
                         self._dtw_status = f"已注册: {result.label}"
                         logger.info("DTW template registered: %s (action=%s)",
                                     result.name, self._trainer_action)
-                    self._trainer_requested = False
+                    self._trainer_event.clear()
             self._draw_preview(frame, hand, gesture)
             return
 
@@ -492,7 +493,7 @@ class GesturePipeline:
         if self._dtw_trainer is None:
             logger.warning("DTW trainer not available")
             return
-        if self._trainer_requested:
+        if self._trainer_event.is_set():
             logger.warning("Training already in progress")
             return
         if action_config is None:
@@ -502,7 +503,7 @@ class GesturePipeline:
             name = f"gesture_{time.strftime('%Y%m%d_%H%M%S')}"
         if not label:
             label = name
-        self._trainer_requested = True
+        self._trainer_event.set()
         self._trainer_label = label
         self._trainer_action = action_config
         self._trainer_take = 0
@@ -534,7 +535,8 @@ class GesturePipeline:
             time.sleep(0.001)
 
     def toggle_tracking(self) -> None:
-        self._tracking = not self._tracking
+        with self._tracking_lock:
+            self._tracking = not self._tracking
         logger.info("Tracking %s", "enabled" if self._tracking else "disabled")
 
     def set_sensitivity(self, value: float) -> None:
