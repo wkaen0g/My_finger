@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 logger = logging.getLogger(__name__)
 
-from ._hagrid_common import GESTURE_LABELS as _GESTURES
+from ._hagrid_common import GESTURE_LABELS as _GESTURES, NUM_CLASSES
 
 # ── model ─────────────────────────────────────────────────────────────────
 
@@ -33,7 +33,7 @@ class GestureMLP(nn.Module):
             nn.Linear(hidden, hidden // 2),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden // 2, 5),
+            nn.Linear(hidden // 2, NUM_CLASSES),
         )
 
     def forward(self, x):

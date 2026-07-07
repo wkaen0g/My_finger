@@ -38,13 +38,15 @@ GESTURE_LABELS: Tuple[str, ...] = (
     "PALM_OPEN",
     "PINCH",
     "TWO_FINGER",
+    "SINGLE_FINGER",
 )
 
 NUM_CLASSES: int = len(GESTURE_LABELS)
 
-# Assert that CLASS_MAP values are exactly the set of GESTURE_LABELS
-assert set(CLASS_MAP.values()) == set(GESTURE_LABELS), \
-    f"CLASS_MAP values {set(CLASS_MAP.values())} != GESTURE_LABELS {set(GESTURE_LABELS)}"
+# CLASS_MAP values must be a subset of GESTURE_LABELS
+# (GESTURE_LABELS may include additional custom gestures)
+assert set(CLASS_MAP.values()).issubset(set(GESTURE_LABELS)), \
+    f"CLASS_MAP values {set(CLASS_MAP.values())} not in GESTURE_LABELS {set(GESTURE_LABELS)}"
 
 # ── Default configuration ───────────────────────────────────────────────────
 
