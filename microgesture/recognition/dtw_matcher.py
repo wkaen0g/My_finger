@@ -316,7 +316,10 @@ class DtwMatcher:
         self._save_templates()
 
     def _save_templates(self) -> None:
-        """Write templates to templates.json."""
+        """Write templates to templates.json atomically."""
+        import os
+        import tempfile
+
         self._templates_path.parent.mkdir(parents=True, exist_ok=True)
         data = {
             "version": 1,
@@ -330,8 +333,20 @@ class DtwMatcher:
                 for t in self._templates
             ],
         }
-        with open(self._templates_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            dir=str(self._templates_path.parent),
+            prefix=".templates_", suffix=".tmp",
+        )
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            os.replace(tmp_path, str(self._templates_path))
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     # ── cleanup ──────────────────────────────────────────────────────────────
 
