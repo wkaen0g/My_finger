@@ -52,6 +52,8 @@ class TapResult:
 class AirTapDetector:
     """Integral tap detector with separate bend / rebound accumulation."""
 
+    _DEBUG_INTERVAL = 300  # log phase transitions every N frames max
+
     def __init__(
         self,
         *,
@@ -75,10 +77,17 @@ class AirTapDetector:
         self._phase_frames = 0
         self._tap_cooldown = 0
         self._prev_ratio: Optional[float] = None
+        self._frame = 0
+
+    def _debug(self, msg: str, *args) -> None:
+        """Rate-limited debug log (every N frames)."""
+        if self._frame % self._DEBUG_INTERVAL == 0:
+            logger.debug(msg, *args)
 
     # ── public API ──────────────────────────────────────────────────────
 
     def update(self, landmarks: np.ndarray) -> TapResult:
+        self._frame += 1
         mcp = landmarks[MCP_IDX]
         pip = landmarks[PIP_IDX]
         tip = landmarks[TIP_IDX]
@@ -121,7 +130,7 @@ class AirTapDetector:
             self._phase = _Phase.BENDING
             self._bend_sum = abs(dratio)
             self._phase_frames = 1
-            logger.debug("点按: 进入BEND相 sum=%.3f", self._bend_sum)
+            self._debug("点按: 进入BEND相 sum=%.3f", self._bend_sum)
         return None
 
     def _handle_bending(self, dratio: float) -> Optional[TapEvent]:
@@ -129,7 +138,7 @@ class AirTapDetector:
 
         # Timeout — abandoned wind-up
         if self._phase_frames > self.bend_timeout:
-            logger.debug("点按: BEND超时 frames=%d sum=%.3f",
+            self._debug("点按: BEND超时 frames=%d sum=%.3f",
                          self._phase_frames, self._bend_sum)
             self._phase = _Phase.IDLE
             return None
@@ -141,7 +150,7 @@ class AirTapDetector:
 
         # Crossed zero → attempt transition to rebound
         if self._bend_sum < self.min_bend:
-            logger.debug("点按: BEND太浅 sum=%.3f < min=%.2f",
+            self._debug("点按: BEND太浅 sum=%.3f < min=%.2f",
                          self._bend_sum, self.min_bend)
             self._phase = _Phase.IDLE
             return None
@@ -149,7 +158,7 @@ class AirTapDetector:
         self._phase = _Phase.REBOUNDING
         self._rebound_sum = dratio
         self._phase_frames = 1
-        logger.debug("点按: 进入REBOUND相 bend_sum=%.3f", self._bend_sum)
+            self._debug("点按: 进入REBOUND相 bend_sum=%.3f", self._bend_sum)
         return None
 
     def _handle_rebounding(self, dratio: float) -> Optional[TapEvent]:
@@ -157,14 +166,14 @@ class AirTapDetector:
 
         # Timeout — rebound took too long
         if self._phase_frames > self.rebound_timeout:
-            logger.debug("点按: REBOUND超时 frames=%d sum=%.3f thresh=%.2f",
+            self._debug("点按: REBOUND超时 frames=%d sum=%.3f thresh=%.2f",
                          self._phase_frames, self._rebound_sum, self.tap_threshold)
             self._phase = _Phase.IDLE
             return None
 
         # Dipped back negative — false alarm, discard
         if dratio < -self.suppress_threshold:
-            logger.debug("点按: REBOUND回退 取消")
+            self._debug("点按: REBOUND回退 取消")
             self._phase = _Phase.IDLE
             return None
 

@@ -31,7 +31,7 @@
     },
     "scroll": {
         "sensitivity": 2.0,
-        "deadzone": 0.01,
+        "deadzone": 0.03,
         "smoothing_beta": 0.007,
         "smoothing_fcmin": 1.0,
         "smoothing_cutoff": 1.0
@@ -53,7 +53,7 @@
         "backup_count": 5
     },
     "dtw": {
-        "arm_frames": 10,
+        "arm_frames": 15,
         "max_record_frames": 120,
         "min_record_frames": 15,
         "dtw_radius": 10,

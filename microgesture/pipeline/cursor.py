@@ -109,7 +109,7 @@ class CursorController:
         if abs(raw_dy) < dz:
             raw_dy = 0.0
 
-        if self._frame % 5 == 0 and (raw_dx != 0 or raw_dy != 0):
+        if self._frame % 300 == 0 and (raw_dx != 0 or raw_dy != 0):
             logger.debug("光标: 感知=%.1f×%.1f 死区=%.1f",
                          raw_dx, raw_dy, dz)
 
