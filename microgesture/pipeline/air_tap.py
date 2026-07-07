@@ -158,7 +158,7 @@ class AirTapDetector:
         self._phase = _Phase.REBOUNDING
         self._rebound_sum = dratio
         self._phase_frames = 1
-            self._debug("点按: 进入REBOUND相 bend_sum=%.3f", self._bend_sum)
+        self._debug("点按: 进入REBOUND相 bend_sum=%.3f", self._bend_sum)
         return None
 
     def _handle_rebounding(self, dratio: float) -> Optional[TapEvent]:
