@@ -64,6 +64,7 @@ class ControlPanel:
         on_save: Callable[[], None] | None = None,
         get_templates: Callable[[], list[dict]] | None = None,
         is_training: Callable[[], bool] | None = None,
+        get_train_status: Callable[[], str] | None = None,
     ):
         self._root = root
         self._on_save = on_save
@@ -72,6 +73,7 @@ class ControlPanel:
         self._on_delete = on_delete_gesture
         self._get_templates = get_templates
         self._is_training = is_training
+        self._get_train_status = get_train_status
         self._window_open = True
 
         win = tk.Toplevel(root)
@@ -307,12 +309,18 @@ class ControlPanel:
         if not self._window_open:
             return
         if hasattr(self, '_is_training') and self._is_training():
-            # Still training — poll again
+            # Update live status from trainer
+            if hasattr(self, '_get_train_status'):
+                self._train_status.configure(text=self._get_train_status())
             self._win.after(500, self._poll_training)
         else:
             # Training complete
             self._reg_btn.configure(state="normal", text="Register New")
-            self._train_status.configure(text="Training complete!")
+            if hasattr(self, '_get_train_status'):
+                status = self._get_train_status()
+                self._train_status.configure(text=status if status else "训练完成!")
+            else:
+                self._train_status.configure(text="训练完成!")
             self._refresh_templates()
 
     def _on_delete_click(self):

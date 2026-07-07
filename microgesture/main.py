@@ -691,6 +691,7 @@ class GesturePipeline:
                 on_save=self.save_all_settings,
                 get_templates=get_templates,
                 is_training=self.is_training,
+                get_train_status=self.get_train_status,
             )
             open_control_panel(self._tk_root, **kwargs)
             logger.info("Control panel opened")
@@ -699,6 +700,9 @@ class GesturePipeline:
 
     def is_training(self) -> bool:
         return self._trainer_event.is_set()
+
+    def get_train_status(self) -> str:
+        return self._dtw_status if hasattr(self, '_dtw_status') else ""
 
     def open_control_panel(self) -> None:
         """Schedule control panel creation on the tk thread (thread-safe)."""
