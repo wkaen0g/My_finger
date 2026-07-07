@@ -123,21 +123,22 @@ class ControlPanel:
         var = tk.DoubleVar(value=initial)
         ttk.Label(parent, text=label_text).grid(row=row, column=0, sticky="w",
                                                  padx=4, pady=(4, 0))
+        lbl = ttk.Label(parent, text=f"{initial:{fmt}}")
         ttk.Scale(parent, from_=from_val, to=to_val, variable=var,
                   orient=tk.HORIZONTAL, length=220,
-                  command=lambda v, cb=callback, f=fmt: self._on_slider(cb, v, f)
+                  command=lambda v, cb=callback, l=lbl, f=fmt:
+                  self._on_slider(cb, v, l, f)
                   ).grid(row=row + 1, column=0, sticky="ew", padx=4)
-        lbl = ttk.Label(parent, text=f"{initial:{fmt}}")
         lbl.grid(row=row + 1, column=1, padx=(4, 0))
 
     @staticmethod
-    def _on_slider(callback, val, fmt):
+    def _on_slider(callback, val, lbl, fmt):
+        v = float(val)
+        lbl.configure(text=f"{v:{fmt}}")
         if callback:
-            try:
-                v = float(val)
-                callback(round(v, 3 if '.' in fmt and fmt.endswith('f') else 0))
-            except (ValueError, TypeError):
-                pass
+            # Integer callbacks get rounded values
+            is_int = ".0" in fmt
+            callback(int(round(v)) if is_int else round(v, 3))
 
     # ── System tab ───────────────────────────────────────────────────────
 
