@@ -113,7 +113,7 @@ class ControlPanel:
             side=tk.LEFT, padx=(0, 4))
         ttk.Button(bar, text="Close", command=self._on_close).pack(side=tk.LEFT)
 
-        win.geometry("400x500")
+        win.geometry("520x620")
 
         # ── Poll for live stats ─────────────────────────────────────────
         self._poll()
@@ -127,7 +127,7 @@ class ControlPanel:
                                                  padx=4, pady=(4, 0))
         lbl = ttk.Label(parent, text=f"{initial:{fmt}}")
         ttk.Scale(parent, from_=from_val, to=to_val, variable=var,
-                  orient=tk.HORIZONTAL, length=220,
+                  orient=tk.HORIZONTAL, length=300,
                   command=lambda v, cb=callback, l=lbl, f=fmt:
                   self._on_slider(cb, v, l, f)
                   ).grid(row=row + 1, column=0, sticky="ew", padx=4)
