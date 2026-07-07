@@ -23,7 +23,7 @@ class PinchEvent:
 class PinchDetector:
     """State machine for thumb-index pinch detection with hysteresis."""
 
-    _DEBUG_INTERVAL = 300
+    _DEBUG_INTERVAL = 5
 
     def __init__(self, pinch_threshold_ratio: float = 0.35,
                  release_threshold_ratio: float = 0.55):

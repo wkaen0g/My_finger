@@ -52,7 +52,7 @@ class TapResult:
 class AirTapDetector:
     """Integral tap detector with separate bend / rebound accumulation."""
 
-    _DEBUG_INTERVAL = 300  # log phase transitions every N frames max
+    _DEBUG_INTERVAL = 5
 
     def __init__(
         self,

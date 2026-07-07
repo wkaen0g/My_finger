@@ -409,6 +409,8 @@ class GesturePipeline:
     def _handle_cursor_move(self, landmarks) -> None:
         # Full cursor suppression when finger is bending hard
         if self._tap_result is not None and self._tap_result.suppress_cursor:
+            if self._shadow_frame % 5 == 0:
+                logger.debug("光标: 点按抑制 弯曲比=%.3f", self._tap_result.dratio)
             return
         # Larger deadzone when tracking a potential tap
         self.cursor._tap_active = self.tap.is_tapping

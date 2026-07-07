@@ -59,7 +59,7 @@ class RuleEngine:
         closed_count = sum(1 for d in distances if d < self.fist_threshold)
 
         # ── per-finger debug (every 300th frame ≈ 10s) ──
-        if self._frame % 300 == 0:
+        if self._frame % 5 == 0:
             parts = ", ".join(
                 f"{n}={distances[i]:.3f}"
                 f"({'伸' if d > self.open_threshold else '屈' if d < self.fist_threshold else '半'})"
@@ -77,7 +77,7 @@ class RuleEngine:
         pinch_dist = np.linalg.norm(landmarks[THUMB_TIP] - landmarks[INDEX_TIP])
         hand_scale = np.linalg.norm(landmarks[WRIST] - landmarks[MIDDLE_MCP])
         pinch_norm = pinch_dist / hand_scale if hand_scale > 0 else 1.0
-        if self._frame % 300 == 0:
+        if self._frame % 5 == 0:
             logger.debug("捏合: dist=%.3f scale=%.3f norm=%.3f thresh=%.2f",
                          pinch_dist, hand_scale, pinch_norm, self.pinch_ratio)
         # PINCH requires: tips close AND index finger NOT fully extended.
@@ -99,6 +99,6 @@ class RuleEngine:
             return GestureResult(Gesture.PALM_OPEN, landmarks, 0.7)
 
         # Unclear posture — default to palm_open for cursor tracking
-        if self._frame % 300 == 0:
+        if self._frame % 5 == 0:
             logger.debug("手势判定: PALM_OPEN (fallback, conf=0.3)")
         return GestureResult(Gesture.PALM_OPEN, landmarks, 0.3)
