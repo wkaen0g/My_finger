@@ -265,6 +265,22 @@ class ControlPanel:
         self._tree.grid(row=row, column=0, columnspan=2, sticky="ew", padx=4)
         row += 1
 
+        # Key combo selector
+        keyf = ttk.Frame(f)
+        keyf.grid(row=row, column=0, columnspan=2, sticky="ew", padx=4, pady=(4, 0))
+        ttk.Label(keyf, text="快捷键:").pack(side=tk.LEFT)
+        self._key_var = tk.StringVar(value="ctrl+s")
+        self._key_combo = ttk.Combobox(keyf, textvariable=self._key_var, width=18,
+                                       values=["ctrl+c", "ctrl+v", "ctrl+s", "ctrl+z",
+                                               "ctrl+a", "ctrl+w", "ctrl+t", "ctrl+n",
+                                               "win+d", "win+e", "win+r", "win+l",
+                                               "alt+tab", "alt+f4",
+                                               "f5", "f11", "enter", "space",
+                                               "volume_mute", "volume_down", "volume_up",
+                                               "media_play", "media_next", "media_prev"])
+        self._key_combo.pack(side=tk.LEFT, padx=(4, 0))
+        row += 1
+
         btnf = ttk.Frame(f)
         btnf.grid(row=row, column=0, columnspan=2, sticky="ew", padx=4, pady=4)
         self._reg_btn = ttk.Button(btnf, text="Register New",
@@ -299,7 +315,11 @@ class ControlPanel:
         if self._on_register:
             import time
             name = f"gesture_{time.strftime('%H%M%S')}"
-            self._on_register(name, name, {"type": "key_combo", "modifiers": ["ctrl"], "key": "s"})
+            combo_text = self._key_var.get().strip()
+            parts = combo_text.lower().split("+")
+            mods = [p for p in parts[:-1] if p in ("ctrl", "alt", "shift", "win")]
+            key = parts[-1] if parts else ""
+            self._on_register(name, name, {"type": "key_combo", "modifiers": mods, "key": key})
             self._reg_btn.configure(state="disabled", text="训练中...")
             self._train_status.configure(text="准备... (请保持静止)")
             self._poll_training()
