@@ -99,6 +99,18 @@ def run_guided_collection(data_dir: str | Path = "microgesture/training/data",
     capture.start()
     time.sleep(1.0)
 
+    try:
+        _run_collection_loop(capture, detector, collector, data_dir,
+                             frames_per_gesture)
+    finally:
+        capture.stop()
+        detector.close()
+        cv2.destroyAllWindows()
+
+
+def _run_collection_loop(capture, detector, collector, data_dir,
+                         frames_per_gesture):
+    """Inner loop so cleanup always runs on exception."""
     cv2.namedWindow("Gesture Collector", cv2.WINDOW_NORMAL)
     cv2.setWindowProperty("Gesture Collector", cv2.WND_PROP_TOPMOST, 1)
 
@@ -165,9 +177,6 @@ def run_guided_collection(data_dir: str | Path = "microgesture/training/data",
     cv2.imshow("Gesture Collector", dummy)
     cv2.waitKey(1)
 
-    capture.stop()
-    detector.close()
-    cv2.destroyAllWindows()
     logger.info("Guided collection complete → %s (%d frames/gesture)",
                 data_dir, frames_per_gesture)
 

@@ -99,3 +99,10 @@ class HandDetector:
 
     def close(self) -> None:
         self._landmarker.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+        return False

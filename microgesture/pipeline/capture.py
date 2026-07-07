@@ -108,3 +108,11 @@ class CameraCapture:
             self._thread.join(timeout=3)
         self._close_camera()
         logger.info("Camera capture stopped")
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, *args):
+        self.stop()
+        return False
