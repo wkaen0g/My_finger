@@ -965,5 +965,80 @@ microgesture/recognition/
 
 ### 下一步
 
-1. 真实摄像头下对比 ONNX vs 规则引擎
-2. Jester 伪标签质量改善（规则引擎修复后重新生成）
+~~1. DTW 运动量分割 + 手势管理 UI~~ ✅ 2026-07-07
+~~2. 控制面板整合 + Tk 线程修复~~ ✅ 2026-07-07
+~~3. SINGLE_FINGER 单指手势~~ ✅ 2026-07-07
+4. 真实摄像头下对比验证
+
+---
+
+## 2026-07-07 — DTW 重构 + 统一控制面板 + 6 类 ONNX
+
+### DTW 运动量自动分割
+
+**问题**: 旧版 FIST 分隔协议成功率 0%（564 次尝试 0 次匹配）
+
+**重构** (`dtw_matcher.py` / `dtw_trainer.py`):
+- 协议: FIST(arm)→动作→FIST(end) → **静止→运动→静止（自动分割）**
+- 指尖速度 > `motion_threshold`(0.005) = 运动中
+- 连续静止 `still_frames`(10) = 手势结束
+- 匹配器 `feed(landmarks)` — 无需 gesture 参数
+- 训练器: 3 次录制，2/5s 倒计时，DBA 平均，中文引导
+
+### 统一控制面板
+
+**问题**: 两个 `Tk()` 实例 + pystray 消息循环 → 滑块不响应/闪退/Tcl apartment 崩溃
+
+**重构** (`control_panel.py`):
+- 单一 `Tk()` root（daemon 线程），`Toplevel` 子窗口
+- `after(0)` 跨线程调度 UI 创建
+- 4 标签页: System / Mouse / Gesture / DTW
+- System: FPS/推理源/DTW 状态/Tracking 按钮
+- DTW: 参数滑块 + 模板列表 + Register/Delete + 快捷键选择器
+- [Save Config] 持久化到 config.json
+- 训练时禁用按钮 + 实时状态轮询
+
+### SINGLE_FINGER 单指手势
+
+**目的**: 空中点击与手掌张开解绑，提高点击识别率
+
+**判定规则**: 食指伸展(>0.25) + 其余 4 指卷曲(<0.12)
+**优先级**: SINGLE_FINGER > FIST > PINCH > TWO_FINGER > PALM
+
+**手势分发**:
+| 手势 | 光标 | 点击 | 其他 |
+|------|------|------|------|
+| PALM_OPEN | 移动 | — | 捏合拖拽 |
+| SINGLE_FINGER | 冻结 | 左键 | — |
+| FIST | 冻结 | 右键 | — |
+| TWO_FINGER | 冻结 | — | 滚动 |
+
+### 6 类 ONNX 模型
+
+**训练结果** (18,500 样本):
+| 类 | 准确率 |
+|----|:------:|
+| FIST | 100% |
+| NO_HAND | 100% |
+| PALM_OPEN | 98.5% |
+| PINCH | 99.1% |
+| TWO_FINGER | 98.1% |
+| SINGLE_FINGER | 99.7% |
+| **总体** | **99.2%** |
+
+- `GESTURE_LABELS`: 5→6 类
+- `CLASS_MAP` 断言: `==` → `issubset`（允许自定义手势）
+- 测试集: 99.9% (8500 样本, 仅 2 个误判)
+
+### 模型测试程序
+
+新建 `training/model_test.py`:
+```bash
+python -m microgesture.training.model_test --data-dir training/data_test
+```
+输出: 准确率、混淆矩阵、各类 Precision/Recall/F1、错误样本索引
+
+### 下一步
+
+1. 真实摄像头下验证 SINGLE_FINGER 点击识别效果
+2. DTW 匹配阈值校准（录真实手势测距离分布）
