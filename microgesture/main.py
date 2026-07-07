@@ -108,6 +108,13 @@ class GesturePipeline:
         self.config = config
         self._running = False
         self._tracking = True
+
+        # ── Shared Tk root for all UI panels ────────────────────────────
+        import tkinter as tk
+        import threading
+        self._tk_root = tk.Tk()
+        self._tk_root.withdraw()  # hidden
+        threading.Thread(target=self._tk_root.mainloop, daemon=True).start()
         self._tracking_lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._on_status_change = on_status_change
@@ -619,58 +626,28 @@ class GesturePipeline:
         cfg.save()
         logger.info("Settings saved to config.json")
 
-    def open_gesture_manager(self) -> None:
-        """Open the gesture template manager."""
+    def open_control_panel(self) -> None:
+        """Open the unified control panel."""
         try:
-            from .system.gesture_manager import open_gesture_manager
+            from .system.control_panel import open_control_panel
 
             def get_templates():
                 if self._dtw_matcher is None:
                     return []
-                result = []
-                for t in self._dtw_matcher._templates:
-                    result.append({
-                        "name": t.name,
-                        "label": t.label,
-                        "sequence": t.sequence.tolist(),
-                        "action": t.action_config,
-                    })
-                return result
+                return [{"name": t.name, "label": t.label,
+                         "sequence": t.sequence.tolist(),
+                         "action": t.action_config}
+                        for t in self._dtw_matcher._templates]
 
-            def get_state():
-                if self._dtw_matcher is None:
-                    return "N/A"
-                return self._dtw_matcher.state.name
-
-            def get_buffer():
-                if self._dtw_matcher is None:
-                    return 0
-                return self._dtw_matcher.buffer_size
-
-            def on_register(name, label, action):
-                self.handle_register_gesture(name, label, action)
-
-            def on_delete(name):
-                if self._dtw_matcher:
-                    self._dtw_matcher.remove_template(name)
-                    logger.info("Deleted DTW template: %s", name)
-
-            open_gesture_manager(
-                get_templates=get_templates,
-                get_state=get_state,
-                get_buffer=get_buffer,
-                on_register=on_register,
-                on_delete=on_delete,
-            )
-            logger.info("Gesture manager opened")
-        except Exception:
-            logger.exception("Failed to open gesture manager")
-
-    def open_settings(self) -> None:
-        """Open the settings GUI panel."""
-        try:
-            from .system.settings_gui import open_settings_panel
-            panel = open_settings_panel(
+            kwargs = dict(
+                fps=self._fps,
+                inference_source=self._inference_source,
+                onnx_conf=self._onnx_conf,
+                tracking_enabled=self._tracking,
+                camera_connected=self.capture.is_connected,
+                dtw_state=self._dtw_matcher.state.name if self._dtw_matcher else "N/A",
+                dtw_buffer=self._dtw_matcher.buffer_size if self._dtw_matcher else 0,
+                template_count=self._dtw_matcher.template_count if self._dtw_matcher else 0,
                 cursor_sensitivity=self.cursor.sensitivity,
                 cursor_deadzone=self.cursor.deadzone,
                 cursor_tap_deadzone=self.cursor.tap_deadzone,
@@ -685,6 +662,7 @@ class GesturePipeline:
                 dtw_min_frames=self._dtw_matcher._min_record_frames if self._dtw_matcher else 15,
                 dtw_match_threshold=self._dtw_matcher._match_threshold if self._dtw_matcher else 8.0,
                 dtw_cooldown_frames=self._dtw_matcher._cooldown_frames if self._dtw_matcher else 90,
+                on_toggle_tracking=self.toggle_tracking,
                 on_cursor_sensitivity=self.set_sensitivity,
                 on_cursor_deadzone=self.set_cursor_deadzone,
                 on_cursor_tap_deadzone=self.set_cursor_tap_deadzone,
@@ -699,11 +677,15 @@ class GesturePipeline:
                 on_dtw_min=self.set_dtw_min,
                 on_dtw_threshold=self.set_dtw_threshold,
                 on_dtw_cooldown=self.set_dtw_cooldown,
+                on_register_gesture=lambda n, l, a: self.handle_register_gesture(n, l, a),
+                on_delete_gesture=lambda n: self._dtw_matcher.remove_template(n) if self._dtw_matcher else None,
                 on_save=self.save_all_settings,
+                get_templates=get_templates,
             )
-            logger.info("Settings panel opened")
+            open_control_panel(self._tk_root, **kwargs)
+            logger.info("Control panel opened")
         except Exception:
-            logger.exception("Failed to open settings panel")
+            logger.exception("Failed to open control panel")
 
     def start(self) -> None:
         self._running = True
@@ -748,8 +730,7 @@ def main(argv=None) -> None:
         set_right_click=pipeline.set_right_click,
         quit_app=lambda: shutdown(pipeline, tray),
         register_gesture=lambda: pipeline.handle_register_gesture(),
-        manage_gestures=lambda: pipeline.open_gesture_manager(),
-        open_settings=lambda: pipeline.open_settings(),
+        open_control_panel=lambda: pipeline.open_control_panel(),
     ))
 
     pipeline.start()

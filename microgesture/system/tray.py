@@ -43,16 +43,14 @@ class TrayCallbacks:
         set_right_click: Callable[[str], None],
         quit_app: Callable[[], None],
         register_gesture: Callable[[], None] | None = None,
-        open_settings: Callable[[], None] | None = None,
-        manage_gestures: Callable[[], None] | None = None,
+        open_control_panel: Callable[[], None] | None = None,
     ):
         self.toggle_tracking = toggle_tracking
         self.set_sensitivity = set_sensitivity
         self.set_right_click = set_right_click
         self.quit_app = quit_app
         self.register_gesture = register_gesture
-        self.open_settings = open_settings
-        self.manage_gestures = manage_gestures
+        self.open_control_panel = open_control_panel
 
 
 # ── tray ───────────────────────────────────────────────────────────────────
@@ -98,13 +96,9 @@ class SystemTray:
         if self._cb.register_gesture:
             self._cb.register_gesture()
 
-    def _on_open_settings(self) -> None:
-        if self._cb.open_settings:
-            self._cb.open_settings()
-
-    def _on_manage_gestures(self) -> None:
-        if self._cb.manage_gestures:
-            self._cb.manage_gestures()
+    def _on_open_control_panel(self) -> None:
+        if self._cb.open_control_panel:
+            self._cb.open_control_panel()
 
     # ── menu ───────────────────────────────────────────────────────────
 
@@ -136,10 +130,8 @@ class SystemTray:
             Menu.SEPARATOR,
             MenuItem("Register Gesture ...", lambda i: self._on_register_gesture(),
                      enabled=lambda i: self._cb.register_gesture is not None),
-            MenuItem("Manage Gestures ...", lambda i: self._on_manage_gestures(),
-                     enabled=lambda i: self._cb.manage_gestures is not None),
-            MenuItem("Settings ...", lambda i: self._on_open_settings(),
-                     enabled=lambda i: self._cb.open_settings is not None),
+            MenuItem("Control Panel ...", lambda i: self._on_open_control_panel(),
+                     enabled=lambda i: self._cb.open_control_panel is not None),
             Menu.SEPARATOR,
             MenuItem("Quit", lambda i: self._on_quit()),
         )
