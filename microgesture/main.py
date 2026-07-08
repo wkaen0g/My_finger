@@ -266,6 +266,7 @@ class GesturePipeline:
         self._trainer_event = threading.Event()
         self._trainer_label = ""
         self._trainer_action: dict = {}
+        self._on_training_done = None  # called from tk thread when training finishes
         self._trainer_take = 0
         self._dtw_cooldown = 0
         self._dtw_status: str = ""
@@ -472,15 +473,30 @@ class GesturePipeline:
                 self._trainer_take = take_num
                 logger.info("DTW training: take %d/3 recorded", take_num)
                 if take_num >= 3:
-                    result = self._dtw_trainer.finish()
-                    if result and self._dtw_matcher:
-                        self._dtw_matcher.add_template(
-                            result.name, result.label, result.sequence,
-                            self._trainer_action,
-                        )
-                        self._dtw_status = f"已注册: {result.label}"
-                        logger.info("DTW template registered: %s (action=%s)",
-                                    result.name, self._trainer_action)
+                    try:
+                        result = self._dtw_trainer.finish()
+                        if result and self._dtw_matcher:
+                            self._dtw_matcher.add_template(
+                                result.name, result.label, result.sequence,
+                                self._trainer_action,
+                                self_distance=result.self_distance,
+                            )
+                            self._dtw_status = f"已注册: {result.label}"
+                            logger.info("DTW template registered: %s (action=%s, self_dist=%.2f)",
+                                        result.name, self._trainer_action,
+                                        result.self_distance)
+                        else:
+                            self._dtw_status = "注册失败 — 请重试"
+                    except Exception:
+                        logger.exception("DTW finish/register failed")
+                        self._dtw_status = "注册失败 — 请重试"
+                    finally:
+                        logger.info("DTW training done — clearing event (take=%d)", take_num)
+                        self._trainer_event.clear()
+                # Trainer went IDLE without completing (timeout / too short)
+                elif self._dtw_trainer._state == self._dtw_trainer._state.__class__.IDLE:
+                    logger.warning("DTW trainer aborted (state=IDLE, take=%d) — clearing event",
+                                   self._trainer_take)
                     self._trainer_event.clear()
             self._draw_preview(frame, hand, gesture)
             return
@@ -830,11 +846,13 @@ def main(argv=None) -> None:
 
     pipeline = GesturePipeline(config)
 
+    # Quit flow: tray callback → tray.stop() → tray thread exits →
+    # main thread detects tt.is_alive()==False → shutdown() in finally.
     tray = SystemTray(TrayCallbacks(
         toggle_tracking=pipeline.toggle_tracking,
         set_sensitivity=pipeline.set_sensitivity,
         set_right_click=pipeline.set_right_click,
-        quit_app=lambda: shutdown(pipeline, tray),
+        quit_app=lambda: tray.stop(),
         register_gesture=lambda: pipeline.handle_register_gesture(),
         open_control_panel=lambda: pipeline.open_control_panel(),
     ))
@@ -873,6 +891,11 @@ def shutdown(pipeline: GesturePipeline, tray: SystemTray) -> None:
         tray.stop()
     except Exception:
         logger.exception("Error stopping tray")
+    # Stop tkinter event loop (daemon thread — send quit via queue)
+    try:
+        pipeline._ui_queue.put(("stop",))
+    except Exception:
+        pass
     # Clean up OpenCV windows
     try:
         import cv2

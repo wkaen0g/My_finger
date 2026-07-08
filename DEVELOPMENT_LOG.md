@@ -1042,3 +1042,152 @@ python -m microgesture.training.model_test --data-dir training/data_test
 
 1. 真实摄像头下验证 SINGLE_FINGER 点击识别效果
 2. DTW 匹配阈值校准（录真实手势测距离分布）
+
+---
+
+## 2026-07-07 — 点击系统重构 + 手势归一化 + 模型重训
+
+### 日志问题诊断与修复
+
+**问题**: 日志中发现 4 类问题，逐一修复：
+
+| # | 问题 | 修复 | 文件 |
+|---|------|------|------|
+| 1 | `main thread is not in main loop` — tkinter 跨线程崩溃 | Queue + after 轮询，UI 请求从任意线程 put 入队，tk 线程轮询消费 | `main.py` |
+| 2 | Config JSON 竞态 — `os.replace` 触发 watchdog 读脏 | reload() 3 次重试 + watchdog 0.5s 防抖 | `config.py` |
+| 3 | DTW 全程退化 — fastdtw 未安装，静默降级为欧氏距离 | `pip install fastdtw` + 一次性告警 | `dtw_matcher.py`, `dtw_trainer.py` |
+| 4 | "Training already in progress" 刷屏 | 守卫逻辑正确（pystray 无法动态禁用菜单项），非 bug | 无需改动 |
+
+### 日志 TRACE 级别
+
+加自定义 TRACE=5 日志级别，三级层次：
+
+```
+TRACE (5)  ← 指尖距离/捏合参数/光标感知/DTW 状态震荡  [--trace]
+DEBUG (10) ← Inference 摘要/DTW 匹配详情/空中点按状态  [--debug]
+INFO  (20) ← 启动配置/手势触发/模板注册                  [默认]
+```
+
+- 逐帧数据从 DEBUG 迁至 TRACE（`gesture_engine.py`, `pinch.py`, `cursor.py`, `dtw_matcher.py`）
+- 新增 `--trace` CLI 参数
+- 默认日志级别: `config.json` `logging.level` 从 DEBUG 改为 INFO
+
+### 手势引擎归一化重构
+
+**问题**: 指尖-MCP 距离用 MediaPipe 归一化坐标的绝对值判定，手离摄像头远近导致距离系统性偏移。同一食指从 0.207 到 0.305，阈值 0.25 导致远距离手永远达不到"伸"。
+
+**修复**: 所有 tip-MCP 距离除以 `hand_scale`（wrist→middle_MCP），阈值改为比例：
+
+| 参数 | 旧值(绝对) | 新值(比例) | 含义 |
+|------|-----------|-----------|------|
+| `tip_mcp_open_ratio` | 0.25 | **0.70** | 手指归一化距离 > 此值 = 伸 |
+| `tip_mcp_fist_ratio` | 0.12 | **0.45** | 手指归一化距离 < 此值 = 屈 |
+| `single_mid_max` | — | **0.60** | 中指联动缓冲（tendon coupling） |
+| `single_ring_max` | — | **0.55** | 无名指联动缓冲 |
+| `single_idx_ratio` | — | **1.3** | 食指/中指比值护盾 |
+
+- 捏合归一化复用同一个 `hand_scale`，消除重复计算
+- Config key 改名: `tip_mcp_open_threshold`→`tip_mcp_open_ratio`（避免旧绝对值残留）
+
+### SINGLE_FINGER 判定优化
+
+从日志分析确认 3 条误分类路径全部出现，逐一修复：
+
+| 修正 | 效果 |
+|------|------|
+| **拇指不检查** | 拇指与食指独立运动，半张不再破坏单指分类 |
+| **中/无名指宽松阈值** | 手指联动有缓冲: 中指 0.60, 无名指 0.55 |
+| **FIST 护盾** | `closed_count>=4` 时，若食指 > others_max×1.5 → 抑制 FIST，防止点击弯曲时误判为拳 |
+| **食指指数优势** | 食指必须 > 中指×1.3，防止 TWO_FINGER 误判为 SINGLE_FINGER |
+
+**最终 SINGLE_FINGER 条件**:
+```
+食指 > 0.70                  (fully extended)
+食指 > 中指 × 1.3            (dominance guard)
+中指 < 0.60                  (tendon coupling buffer)
+无名指 < 0.55
+小指 < 0.45                  (strict)
+拇指: 不检查
+```
+
+**FIST 最终条件**:
+```
+4+ 指蜷缩 (< 0.45) AND 食指不是优势指 (index <= others_max × 1.5)
+```
+
+### 点击系统重构
+
+**AirTapDetector 手势门控**: 仅 SINGLE_FINGER/FIST 时运行，PALM_OPEN 下跳过。消除光标移动中的误触（之前 4 分钟 40+ 次误检测）。
+
+**武装锁存状态机**:
+```
+SINGLE_FINGER 出现 → _armed_tap = True, 倒计时 15 帧 (~0.5s)
+  期间: 手指弯曲导致手势掉落 → PALM_OPEN 分支仍调用 _handle_tap()
+  超时: 15 帧无 SINGLE_FINGER → 自动解除
+  消费: tap 事件触发 → 执行点击 + 立即 disarm（防双击）
+```
+
+**右键修复**: 之前仅 SINGLE_FINGER 跑 tap 检测器，FIST（fist_tap 模式）的 `_tap_result` 永远为 None → 右键永远不触发。修复后 FIST 也跑检测器。
+
+**阈值下调**: 点击只需轻微手指动作，食指保持在 0.70 阈值以上不掉手势：
+
+| 参数 | 旧值 | 新值 |
+|------|------|------|
+| `tap_threshold` | 0.30 | **0.20** |
+| `tap_min_bend` | 0.15 | **0.10** |
+
+**实测效果**（22:26 会话）: 8/8 点击 = **100% 转化率**，bend 值从 0.234~0.510 降至 0.111~0.265。
+
+**预览面板**: 新增 `ARMED:L 15` 武装状态指示。
+
+### 点击触发逻辑（端到端）
+
+```
+每帧 _process_frame:
+  1. 手势分类: RuleEngine + ONNX shadow (conf≥90%→ONNX 接管)
+  2. Tap 检测器: 仅 SINGLE_FINGER/FIST 时运行
+     AirTapDetector 状态机:
+       ratio = |食指 tip-MCP| / |食指 PIP-MCP|
+       IDLE → BENDING (Δratio<0, 积分弯曲 >0.10)
+       BENDING → REBOUND (Δratio>0, 积分回弹 >0.20)
+       REBOUND → 💥 TapEvent!
+  3. 武装锁存: SINGLE_FINGER/FIST → _armed_tap=True
+     手势丢失 → 倒计时 15 帧 → 超时 disarm
+  4. 派发:
+     SINGLE_FINGER → freeze 光标 + _handle_tap()
+     PALM_OPEN + armed → 也调 _handle_tap() (锁存兜底)
+     FIST + fist_tap → _handle_tap(right_click=True)
+  5. _handle_tap():
+     检查 _tap_result.event → click()/right_click()
+     → _armed_tap = False (消费后立即 disarm)
+```
+
+### 重新训练 6 类 ONNX 模型
+
+| 指标 | 值 |
+|------|-----|
+| 训练数据 | 20,500 样本（SINGLE_FINGER 3000, 其余 3500） |
+| 验证准确率 | **100.0%** |
+| 测试集准确率 | **99.98% (8498/8500)** |
+| ONNX 路径 | `microgesture/models/classifier.onnx` |
+
+SINGLE_FINGER 增量采集 2000 帧，测试集 1000/1000 全对。
+
+### 工具脚本
+
+| 脚本 | 用途 |
+|------|------|
+| `start_collector_single.bat [帧数]` | 单指专用数据采集 |
+| `start_train.bat` | 训练 + ONNX 导出 |
+| `start_test.bat` | ONNX + PyTorch 双模型测试 |
+
+`guided_collector.py` 新增 `--gestures` 参数：`--gestures SINGLE_FINGER` 只采指定手势。
+
+### 测试
+
+52 单元测试全过（新增 5 个 gesture_engine 测试覆盖归一化阈值 + 指数护盾 + FIST 抑制）。
+
+### 下一步
+
+1. 长时间使用验证点击稳定性
+2. DTW 匹配阈值校准（录真实手势测距离分布）

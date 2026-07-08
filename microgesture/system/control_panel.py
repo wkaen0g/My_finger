@@ -265,6 +265,15 @@ class ControlPanel:
         self._tree.grid(row=row, column=0, columnspan=2, sticky="ew", padx=4)
         row += 1
 
+        # Name input
+        namef = ttk.Frame(f)
+        namef.grid(row=row, column=0, columnspan=2, sticky="ew", padx=4, pady=(4, 0))
+        ttk.Label(namef, text="名称:").pack(side=tk.LEFT)
+        self._name_var = tk.StringVar(value="")
+        self._name_entry = ttk.Entry(namef, textvariable=self._name_var, width=22)
+        self._name_entry.pack(side=tk.LEFT, padx=(4, 0))
+        row += 1
+
         # Key combo selector
         keyf = ttk.Frame(f)
         keyf.grid(row=row, column=0, columnspan=2, sticky="ew", padx=4, pady=(4, 0))
@@ -302,7 +311,11 @@ class ControlPanel:
         for item in self._tree.get_children():
             self._tree.delete(item)
         if self._get_templates:
-            for t in self._get_templates():
+            try:
+                templates = self._get_templates()
+            except Exception:
+                return
+            for t in templates:
                 action = t.get("action", {})
                 action_str = ""
                 if action.get("type") == "key_combo":
@@ -313,8 +326,10 @@ class ControlPanel:
 
     def _on_register_click(self):
         if self._on_register:
-            import time
-            name = f"gesture_{time.strftime('%H%M%S')}"
+            name = self._name_var.get().strip()
+            if not name:
+                import time
+                name = f"gesture_{time.strftime('%H%M%S')}"
             combo_text = self._key_var.get().strip()
             parts = combo_text.lower().split("+")
             mods = [p for p in parts[:-1] if p in ("ctrl", "alt", "shift", "win")]
@@ -328,20 +343,32 @@ class ControlPanel:
         """Check if training is complete, update status, re-enable button."""
         if not self._window_open:
             return
-        if hasattr(self, '_is_training') and self._is_training():
-            # Update live status from trainer
-            if hasattr(self, '_get_train_status'):
-                self._train_status.configure(text=self._get_train_status())
-            self._win.after(500, self._poll_training)
+        try:
+            if self._is_training and self._is_training():
+                # Still training — update live status from trainer
+                if self._get_train_status:
+                    status = self._get_train_status()
+                    self._train_status.configure(text=status)
+                    import logging
+                    logging.getLogger("control_panel").debug(
+                        "Poll: training active, status=%s", status)
+                self._win.after(300, self._poll_training)
+                return
+        except Exception as e:
+            import logging
+            logging.getLogger("control_panel").warning(
+                "Poll error: %s", e, exc_info=True)
+
+        # Training complete
+        import logging
+        logging.getLogger("control_panel").info("Poll: training done, refreshing UI")
+        self._reg_btn.configure(state="normal", text="Register New")
+        if self._get_train_status:
+            status = self._get_train_status()
+            self._train_status.configure(text=status if status else "训练完成!")
         else:
-            # Training complete
-            self._reg_btn.configure(state="normal", text="Register New")
-            if hasattr(self, '_get_train_status'):
-                status = self._get_train_status()
-                self._train_status.configure(text=status if status else "训练完成!")
-            else:
-                self._train_status.configure(text="训练完成!")
-            self._refresh_templates()
+            self._train_status.configure(text="训练完成!")
+        self._refresh_templates()
 
     def _on_delete_click(self):
         sel = self._tree.selection()

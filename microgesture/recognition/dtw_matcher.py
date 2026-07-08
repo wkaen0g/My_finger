@@ -49,6 +49,7 @@ class Template:
     label: str
     sequence: np.ndarray    # (N, 63) wrist-relative flattened landmarks
     action_config: dict = field(default_factory=dict)
+    match_threshold: float = 0.0  # 0 = use global; >0 = per-template
 
 
 # ── DTW distance ──────────────────────────────────────────────────────────────
@@ -95,14 +96,14 @@ class DtwMatcher:
 
     def __init__(self, config=None, templates_path: str | Path | None = None):
         # ── motion detection ────────────────────────────────────────────
-        self._motion_threshold = 0.005
-        self._still_frames = 10
+        self._motion_threshold = 0.012
+        self._still_frames = 15
         self._min_record_frames = 15
-        self._max_record_frames = 120
+        self._max_record_frames = 180
 
         # ── matching ────────────────────────────────────────────────────
         self._dtw_radius = 10
-        self._match_threshold = 8.0
+        self._match_threshold = 50.0
         self._cooldown_frames = 90
 
         if config is not None:
@@ -246,12 +247,24 @@ class DtwMatcher:
                 best_dist = dist
                 best_template = tmpl
 
-        if best_template is None or best_dist >= self._match_threshold:
-            logger.debug("DTW: no match (best=%.2f >= %.2f)", best_dist, self._match_threshold)
+        if best_template is None:
+            logger.debug("DTW: no templates to match")
             return None
 
-        confidence = max(0.0, 1.0 - best_dist / self._match_threshold)
-        logger.info("DTW match: %s (dist=%.2f, conf=%.2f)", best_template.name, best_dist, confidence)
+        # Per-template adaptive threshold: self_distance × 2.0
+        # Falls back to global threshold if template has no self-distance.
+        threshold = (best_template.match_threshold
+                     if best_template.match_threshold > 0
+                     else self._match_threshold)
+
+        if best_dist >= threshold:
+            logger.debug("DTW: no match (best=%.2f to '%s' >= %.2f)",
+                         best_dist, best_template.name, threshold)
+            return None
+
+        confidence = max(0.0, 1.0 - best_dist / threshold)
+        logger.info("DTW match: %s (dist=%.2f, thresh=%.2f, conf=%.2f)",
+                     best_template.name, best_dist, threshold, confidence)
         return Match(
             name=best_template.name,
             label=best_template.label,
@@ -275,6 +288,7 @@ class DtwMatcher:
                     name=t["name"], label=t["label"],
                     sequence=np.array(t["sequence"], dtype=np.float32),
                     action_config=t.get("action", {}),
+                    match_threshold=t.get("match_threshold", 0.0),
                 )
                 for t in data.get("templates", [])
             ]
@@ -284,16 +298,22 @@ class DtwMatcher:
             self._templates = []
 
     def add_template(self, name: str, label: str, sequence: np.ndarray,
-                     action_config: dict | None = None) -> None:
+                     action_config: dict | None = None,
+                     self_distance: float = 0.0) -> None:
         if action_config is None:
             action_config = {}
+        # Per-template adaptive threshold: self_distance × 2.0
+        # If no self_distance provided, uses global _match_threshold as fallback.
+        match_threshold = self_distance * 2.0 if self_distance > 0 else 0.0
         self._templates.append(Template(
             name=name, label=label,
             sequence=sequence.astype(np.float32),
             action_config=action_config,
+            match_threshold=match_threshold,
         ))
         self._save_templates()
-        logger.info("Template added: %s (%d frames)", name, len(sequence))
+        logger.info("Template added: %s (%d frames, thresh=%.2f)",
+                     name, len(sequence), match_threshold)
 
     def remove_template(self, name: str) -> None:
         self._templates = [t for t in self._templates if t.name != name]
@@ -306,7 +326,8 @@ class DtwMatcher:
             "version": 1,
             "templates": [
                 {"name": t.name, "label": t.label,
-                 "sequence": t.sequence.tolist(), "action": t.action_config}
+                 "sequence": t.sequence.tolist(), "action": t.action_config,
+                 "match_threshold": t.match_threshold}
                 for t in self._templates
             ],
         }

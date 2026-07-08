@@ -11,6 +11,7 @@ Guides user through 3 recordings, each with a countdown:
 from __future__ import annotations
 
 import logging
+import math
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -33,10 +34,11 @@ class TrainerState(Enum):
 
 @dataclass
 class TrainerResult:
-    sequence: np.ndarray       # (N, 63) DBA-averaged template
-    raw_takes: list[np.ndarray]  # 3 raw recordings
+    sequence: np.ndarray          # (N, 63) DBA-averaged template
+    raw_takes: list[np.ndarray]   # 3 raw recordings
     name: str
     label: str
+    self_distance: float = 0.0    # avg DTW distance of takes vs DBA result
 
 
 class DtwTrainer:
@@ -50,8 +52,8 @@ class DtwTrainer:
     """
 
     TAKES_REQUIRED = 3
-    READY_SECONDS = 3
-    FIRST_READY_SECONDS = 5
+    READY_SECONDS = 5
+    FIRST_READY_SECONDS = 8
 
     def __init__(self, config=None):
         self._state = TrainerState.IDLE
@@ -63,9 +65,9 @@ class DtwTrainer:
         self._on_countdown: Optional[Callable[[int], None]] = None
 
         # Motion thresholds (same as DtwMatcher)
-        self._motion_threshold = 0.005
-        self._still_frames = 10
-        self._max_frames = 120
+        self._motion_threshold = 0.012
+        self._still_frames = 15
+        self._max_frames = 180
         self._min_frames = 15
         self._dtw_radius = 10
         self._ready_end = 0.0
@@ -130,34 +132,42 @@ class DtwTrainer:
         if len(self._takes) < self.TAKES_REQUIRED:
             return None
         avg_sequence = self._compute_dba()
+        # Average DTW distance of raw takes against DBA → natural variation
+        distances = [_dtw_distance(t, avg_sequence, radius=self._dtw_radius)
+                     for t in self._takes]
+        self_distance = float(np.mean(distances))
+        logger.info("DBA self-distance: %.2f (takes: %s)",
+                     self_distance, [f"{d:.2f}" for d in distances])
         self._state = TrainerState.IDLE
         return TrainerResult(
             sequence=avg_sequence,
             raw_takes=list(self._takes),
             name=self._name, label=self._label,
+            self_distance=self_distance,
         )
 
     # ── state machine ─────────────────────────────────────────────────────────
 
     def _handle_ready(self) -> tuple[Optional[int], Optional[str]]:
         remaining = max(0, self._ready_end - time.time())
+        secs = math.ceil(remaining)
         if self._on_countdown:
-            self._on_countdown(int(remaining) + 1)
+            self._on_countdown(secs)
         if remaining <= 0:
             self._state = TrainerState.RECORDING
             self._buffer.clear()
             self._still_counter = 0
             self._is_moving = False
             self._prev_tip = None
-            return (None, "开始! 做手势...")
-        return (None, f"准备... {int(remaining) + 1}")
+            return (None, "开始! 做手势 (做完保持静止)")
+        return (None, f"准备... {secs}")
 
     def _handle_recording(self, landmarks, is_moving) -> tuple[Optional[int], Optional[str]]:
-        # Timeout
+        # Timeout — user kept moving too long
         if len(self._buffer) >= self._max_frames:
             self._buffer.clear()
             self._state = TrainerState.IDLE
-            return (None, "超时 — 请重试")
+            return (None, "超时 — 请重试 (做完后保持静止)")
 
         if not self._is_moving and is_moving:
             self._is_moving = True
@@ -175,12 +185,21 @@ class DtwTrainer:
                     self._buffer.clear()
                     self._state = TrainerState.IDLE
                     return (None, f"太短 ({len(self._buffer)} 帧) — 请重试")
+            # Show the user we're waiting for stillness confirmation
+            remaining_still = self._still_frames - self._still_counter
+            return (None, f"静止确认... {remaining_still}")
         else:
             self._still_counter = 0
 
         buf_len = len(self._buffer)
         if self._is_moving:
-            return (None, f"录制中... {buf_len} 帧")
+            # Warn when approaching timeout
+            if buf_len > self._max_frames * 0.8:
+                return (None, f"录制中... {buf_len} 帧 ⚠快超时")
+            elif buf_len < self._min_frames:
+                return (None, f"录制中... {buf_len} 帧")
+            else:
+                return (None, f"录制中... {buf_len} 帧 (完成后静止)")
         else:
             return (None, "等待动作...")
 

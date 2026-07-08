@@ -1,68 +1,68 @@
 {
-    "camera": {
-        "device_id": 0,
-        "width": 640,
-        "height": 480,
-        "target_fps": 30
-    },
-    "mediapipe": {
-        "min_detection_confidence": 0.5,
-        "min_tracking_confidence": 0.5,
-        "max_num_hands": 1
-    },
-    "gesture": {
-        "tip_mcp_open_ratio": 0.70,
-        "tip_mcp_fist_ratio": 0.45,
-        "single_mid_max": 0.60,
-        "single_ring_max": 0.55,
-        "single_idx_ratio": 1.3,
-        "pinch_start_threshold": 0.35,
-        "pinch_release_threshold": 0.55,
-        "tap_threshold": 0.20,
-        "tap_min_bend": 0.10,
-        "tap_suppress_threshold": 0.1,
-        "tap_bend_timeout": 12,
-        "tap_rebound_timeout": 12,
-        "tap_cooldown_frames": 8
-    },
-    "cursor": {
-        "sensitivity": 0.8,
-        "deadzone": 0.003,
-        "tap_deadzone": 0.012,
-        "smoothing_beta": 0.007,
-        "smoothing_fcmin": 1.0,
-        "smoothing_cutoff": 1.0
-    },
-    "scroll": {
-        "sensitivity": 2.0,
-        "deadzone": 0.03,
-        "smoothing_beta": 0.007,
-        "smoothing_fcmin": 1.0,
-        "smoothing_cutoff": 1.0
-    },
-    "system": {
-        "right_click_mode": "fist_tap",
-        "no_hand_sleep_timeout": 5.0,
-        "shadow_confidence_threshold": 0.90
-    },
-    "debug": {
-        "preview_window": true,
-        "show_landmarks": true
-    },
-    "logging": {
-        "level": "INFO",
-        "dir": "logs",
-        "max_bytes": 10485760,
-        "backup_count": 5
-    },
-    "dtw": {
-        "motion_threshold": 0.005,
-        "still_frames": 10,
-        "max_record_frames": 120,
-        "min_record_frames": 15,
-        "dtw_radius": 10,
-        "match_threshold": 8.0,
-        "cooldown_frames": 90,
-        "templates_path": "templates.json"
-    }
+  "camera": {
+    "device_id": 0,
+    "width": 640,
+    "height": 480,
+    "target_fps": 30
+  },
+  "mediapipe": {
+    "min_detection_confidence": 0.5,
+    "min_tracking_confidence": 0.5,
+    "max_num_hands": 1
+  },
+  "gesture": {
+    "tip_mcp_open_ratio": 0.7,
+    "tip_mcp_fist_ratio": 0.45,
+    "single_mid_max": 0.6,
+    "single_ring_max": 0.55,
+    "single_idx_ratio": 1.3,
+    "pinch_start_threshold": 0.35,
+    "pinch_release_threshold": 0.55,
+    "tap_threshold": 0.2,
+    "tap_min_bend": 0.1,
+    "tap_suppress_threshold": 0.1,
+    "tap_bend_timeout": 12,
+    "tap_rebound_timeout": 12,
+    "tap_cooldown_frames": 8
+  },
+  "cursor": {
+    "sensitivity": 0.8,
+    "deadzone": 0.003,
+    "tap_deadzone": 0.012,
+    "smoothing_beta": 0.007,
+    "smoothing_fcmin": 1.0,
+    "smoothing_cutoff": 1.0
+  },
+  "scroll": {
+    "sensitivity": 2.0,
+    "deadzone": 0.03,
+    "smoothing_beta": 0.007,
+    "smoothing_fcmin": 1.0,
+    "smoothing_cutoff": 1.0
+  },
+  "system": {
+    "right_click_mode": "fist_tap",
+    "no_hand_sleep_timeout": 5.0,
+    "shadow_confidence_threshold": 0.9
+  },
+  "debug": {
+    "preview_window": true,
+    "show_landmarks": true
+  },
+  "logging": {
+    "level": "INFO",
+    "dir": "logs",
+    "max_bytes": 10485760,
+    "backup_count": 5
+  },
+  "dtw": {
+    "motion_threshold": 0.012,
+    "still_frames": 15,
+    "max_record_frames": 180,
+    "min_record_frames": 15,
+    "dtw_radius": 10,
+    "match_threshold": 50.0,
+    "cooldown_frames": 90,
+    "templates_path": "templates.json"
+  }
 }
