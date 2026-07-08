@@ -1,25 +1,30 @@
-# 微手势识别系统 — 实施计划
+# 微手势识别系统 — 开发文档
+
+最后更新: 2026-07-08
 
 ## 概述
 
 基于笔记本/PC 自带摄像头的消费级手势交互系统。通过摄像头追踪手部关键点，将手势映射为系统鼠标事件（光标移动、点击、右键、拖拽、滚动），支持用户自定义手势注册。
 
+**当前状态**: Phase 1-4 全部完成，52 单元测试全过，6 类 ONNX 模型 100% val_acc。
+
 ## 核心设计决策汇总
 
-| 决策点 | 选择 |
-|--------|------|
-| 手势集合 | 静态手势(6类: 5类 + 单指) + 精细手指运动(捏合/点按) + 自定义手势(DTW) |
-| 底层追踪 | MediaPipe Hands (21点手部关键点) |
-| 光标控制 | 混合模式：手掌张开=光标模式，握拳=冻结光标/手势模式 |
-| 点击 | 捏合(拖拽) + 空中点按(单击)，分工不重叠 |
-| 右键 | 握拳冻结态下点按 或 双指点按，配置可选 |
-| 滚动 | 双指伸出(食指+中指)，仅垂直滚动 |
-| 分类器 | 静态5类(手掌张开/握拳/双指/捏合/无手)，Geometry规则先上线 |
-| 训练数据 | HaGRID预训练 + 合成数据扩增 + 自采微调 |
-| 线程模型 | 双线程：采集线程 + 处理线程，deque缓冲(maxlen=2) |
-| 配置系统 | 系统托盘 + JSON热重载，后续加GUI面板 |
-| 项目结构 | `microgesture/` 包，`models/` 目录放ONNX |
-| 交付节奏 | Phase 1(规则引擎可用) → Phase 2(分类器替换) → Phase 3(自定义手势) → Phase 4(精修) |
+| 决策点 | 选择 | 现状 |
+|--------|------|------|
+| 手势集合 | 6类静态手势 + 捏合/点按 + DTW 自定义 | ✅ 全部实现 |
+| 底层追踪 | MediaPipe Hands (21点手部关键点), Tasks API | ✅ |
+| 手势识别 | RuleEngine (几何归一化) + ONNX MLP 影子模式 (conf≥90% 接管) | ✅ |
+| 光标控制 | 混合模式：PALM_OPEN/PINCH=光标, SINGLE_FINGER/FIST/TWO_FINGER=冻结 | ✅ |
+| 点击 (左键) | SINGLE_FINGER + AirTapDetector 积分检测, 武装锁存 15 帧 | ✅ |
+| 点击 (右键) | FIST + AirTapDetector (fist_tap 模式) | ✅ |
+| 拖拽 | PinchDetector 滞后状态机 (start=0.35, release=0.55) | ✅ |
+| 滚动 | TWO_FINGER 双指 y 位移 | ✅ |
+| DTW | 运动量自动分割 (静止→运动→静止) + 每模板自适应阈值 | ✅ |
+| 训练数据 | 自采 20,500 样本 (6 类) | ✅ |
+| ONNX 模型 | 70→128→128→64→6, val_acc 100%, 测试集 99.98% | ✅ |
+| 线程模型 | 5 线程: tk-ui + camera + pipeline + tray + main | ✅ |
+| 配置系统 | 控制面板 (4 标签页) + config.json 热重载 | ✅ |
 
 ---
 
@@ -92,22 +97,33 @@
 | `scroll.py` | 食指 TIP(8) + 中指 TIP(12) | 双指中点 y 位移 |
 
 ### 1.4 规则引擎 (`pipeline/gesture_engine.py`)
-纯几何规则判断5个手势状态（每5帧输出 DEBUG 日志）：
 
-| 手势 | 判定规则 |
-|------|---------|
-| 手掌张开 | 所有5指指尖-MCP距离 > open_threshold(0.25) |
-| 握拳 | 所有5指指尖-MCP距离 < fist_threshold(0.16) |
-| 双指伸出 | 食指+中指指尖-MCP距离 > open_threshold，其余 < fist_threshold |
-| 捏合 | 拇指尖-食指尖归一化距离 < pinch_ratio(0.35) |
-| 无手 | MediaPipe 无检测或置信度<0.5 |
+6 类几何判定。所有指尖-MCP 距离除以 `hand_scale` (wrist→middle_MCP) 做摄像头距离归一化。
 
-### 1.5 空中点按检测 (`pipeline/air_tap.py`) — 已改为积分相位检测
-- [x] 信号源从 z 轴加速度改为**弯曲比**：`ratio = |TIP(8)-MCP(5)| / |PIP(6)-MCP(5)|`
-- [x] 双相积分状态机：BEND 相（累计\|Δratio\|）→ REBOUND 相（累计 Δratio）→ 达标触发
-- [x] BEND 超时 12 帧，REBOUND 超时 12 帧，冷却 8 帧
-- [x] 输出：`TapResult(event, suppress_cursor, ratio, dratio)`
-- [x] 光标抑制：\|Δratio\| > 0.1 时跳过光标移动
+**判定优先级**: SINGLE_FINGER → FIST → PINCH → TWO_FINGER → PALM_OPEN → fallback
+
+| 手势 | 判定规则 | 阈值 (归一化比例) |
+|------|---------|-------------------|
+| SINGLE_FINGER | 食指 > open_ratio, 食指>中指×1.3, 中指<0.60, 无名指<0.55, 小指<0.45, 拇指不检查 | open_ratio=0.70 |
+| FIST | 4+ 指 < fist_ratio, 且食指不是优势指 (防止点击弯曲误判) | fist_ratio=0.45 |
+| PINCH | 拇指-食指归一化距离 < pinch_ratio, 且食指非全伸 | pinch_ratio=0.35 |
+| TWO_FINGER | 食指+中指 > fist_ratio, 无名指+小指 < fist_ratio | — |
+| PALM_OPEN | 3+ 指 > open_ratio, 或 fallback | — |
+| NO_HAND | MediaPipe 无检测 | — |
+
+### 1.5 空中点按检测 (`pipeline/air_tap.py`) — 积分相位 + 手势门控
+
+**原理**: 食指弯曲比 `ratio = |TIP(8)-MCP(5)| / |PIP(6)-MCP(5)|`
+- 直指: ratio ≈ 2.5~3.0, 弯曲: ratio 下降
+
+**双相积分状态机**:
+- BEND 相: 累计 |Δratio| > `min_bend(0.10)` → 有效的预备动作
+- REBOUND 相: 累计 Δratio > `tap_threshold(0.20)` → 触发 TapEvent
+- 超时: BEND 12帧, REBOUND 12帧, 冷却 8帧
+
+**手势门控**: 仅 SINGLE_FINGER/FIST 时运行 AirTapDetector，PALM_OPEN 下跳过（消除光标移动中的误触）
+
+**阈值历史**: tap_threshold 0.3→0.20, min_bend 0.15→0.10 (减小所需手指动作幅度)
 
 ### 1.6 捏合检测 (`pipeline/pinch.py`) — 已加滞后
 - [x] 拇指尖-食指尖归一化距离 / 手腕-中指MCP 距离
@@ -140,168 +156,113 @@
 
 ---
 
-## Phase 2: 分类器替换规则引擎（目标：提升识别精度和鲁棒性）🔧 搭建中
+## Phase 2: 分类器替换规则引擎 ✅ 已完成
 
-### 2.1 数据采集工具 (`training/data_collector.py`, `training/guided_collector.py`)
-- [x] 自由模式：指定手势标签 → 逐帧采集 70 维特征 + 标签 → .npz
-- [x] 引导式采集：全屏 PIL 中文指令覆盖，10 秒准备倒计时，自动录 500 帧/手势
-- [x] 进度显示：实时显示 `已录/目标` 帧数，超时保护 5000 迭代
-- [ ] 伪标签纠错（后续）
-- [x] 输出标注数据格式：`(70维特征向量, 标签)`
+### 2.1 数据采集工具
+- [x] 引导式采集：`guided_collector.py` — PIL 中文指令 + 倒计时 + `--gestures` 筛选手势
+- [x] `--frames` 参数可调每类帧数 (默认 500)
+- [x] `start_collector_single.bat` — 单指专用采集脚本
 
-### 2.2 训练管道 (`training/train_classifier.py`, `training/export_onnx.py`)
-- [x] HaGRID 预训练数据加载（`hagrid_loader.py` 本地图像 + `hagrid_download.py` HuggingFace 下载）
-- [x] 20BN-Jester V1 伪标签预训练数据加载（`jester_loader.py`，规则引擎自动标注）
-- [x] 共享模块 `_hagrid_common.py`：统一 CLASS_MAP / GESTURE_LABELS / 路径解析 / 特征保存
-- [x] 统一 CLI `hagrid.py`：`download` / `process` / `jester` 三个子命令
-- [x] MLP 分类器：70→128→128→64→5，ReLU+Dropout(0.3)，CosineAnnealing 调度
-- [x] 输入：70 维特征（63 坐标 + 5 指尖-MCP距离 + 1 捏合距离 + 1 弯曲比）
-- [x] 输出：5类（手掌张开/握拳/双指/捏合/无手）
-- [x] 自采数据训练：5 类 × 500 帧 = 2500 样本，验证准确率 **100%**
-- [x] 导出 ONNX 到 `microgesture/models/classifier.onnx`（验证通过）
-- [x] `train_with_pretrain()` 两阶段训练：预训练数据集 → 自采数据微调
+### 2.2 训练管道
+- [x] MLP 分类器：70→128→128→64→**6**，ReLU+Dropout(0.3)
+- [x] 输入：70 维特征，输出：**6 类** (FIST, NO_HAND, PALM_OPEN, PINCH, TWO_FINGER, SINGLE_FINGER)
+- [x] 训练数据：**20,500 样本** (FIST/NO_HAND/PALM_OPEN/PINCH/TWO_FINGER 各 3500, SINGLE_FINGER 3000)
+- [x] 验证准确率：**100.0%**，测试集：**99.98% (8498/8500)**
+- [x] 导出 ONNX：`microgesture/models/classifier.onnx`
+- [x] `start_train.bat` — 训练+导出脚本
+- [x] `start_test.bat` — ONNX+PyTorch 双模型测试
+- [x] `training/model_test.py` — 准确率/混淆矩阵/Precision/Recall/F1
 
-### 2.3 分类器推理 (`pipeline/classifier.py`)
-- [x] ONNX Runtime 推理封装
-- [x] 输出类别+置信度（Softmax）
-- [x] 影子模式：规则引擎和分类器并行跑，置信度 ≥ 90% 自动切换
-- [x] ONNX 每 5 帧推理一次（降低负载，避免卡顿）
-- [x] `GestureRecognizer` 抽象基类 (`recognition/base.py`)：`predict(landmarks) → RecognitionResult(label, confidence, features)`
-
-### 2.4 规则引擎实现基类接口 (`recognition/static_classifier.py`)
-- [x] StaticClassifier 包装 RuleEngine，实现 `GestureRecognizer`
-- [x] `gesture_engine.py` 通过影子模式工厂方法获取当前活跃的识别器
-
-### 2.5 新增依赖
-```
-torch>=2.0
-onnxruntime>=1.15
-onnxscript          (torch.onnx 导出依赖)
-```
-
-### 2.6 新增文件
-```
-microgesture/
-├── recognition/
-│   ├── base.py                    # GestureRecognizer 抽象基类 + extract_features(70维)
-│   └── static_classifier.py       # RuleEngine 适配器
-├── pipeline/
-│   └── classifier.py              # ONNX Runtime 推理 (ONNXClassifier)
-├── training/
-│   ├── __init__.py
-│   ├── _hagrid_common.py           # 共享常量/标签/工具（单一事实来源）
-│   ├── data_collector.py          # 核心采集器
-│   ├── guided_collector.py        # 引导模式采集 (PIL中文 + 10s倒计时 + 500帧/手势)
-│   ├── train_classifier.py         # MLP 训练管道 (含两阶段训练)
-│   ├── export_onnx.py             # 导出 ONNX
-│   ├── hagrid_loader.py            # HaGRID 本地图像特征提取
-│   ├── hagrid_download.py          # HaGRID HuggingFace 下载
-│   ├── jester_loader.py            # 20BN-Jester V1 伪标签加载
-│   └── hagrid.py                   # 统一 CLI (download/process/jester)
-├── models/
-│   ├── hand_landmarker.task        # MediaPipe 模型
-│   ├── best_model.pt               # PyTorch 最佳模型
-│   └── classifier.onnx             # ONNX 分类器
-└── training/data/
-    ├── features_PALM_OPEN.npz      # 500 样本
-    ├── features_FIST.npz            # 500 样本
-    ├── features_TWO_FINGER.npz      # 500 样本
-    ├── features_PINCH.npz           # 500 样本
-    ├── features_NO_HAND.npz         # 500 样本
-    └── metadata.json
-```
+### 2.3 影子模式
+- [x] ONNX Runtime 封装 (每帧推理), 置信度 ≥ 90% 自动覆盖规则引擎
+- [x] `GestureRecognizer` 抽象基类 + `StaticClassifier` (RuleEngine 适配器)
 
 ---
 
-## Phase 3: 自定义手势（目标：用户可注册个性化手势）
+## Phase 3: 自定义手势 ✅ 已完成
 
-### 3.1 DTW 匹配器 (`recognition/dtw_matcher.py`) ✅ 2026-07-07 (重构)
-- [x] 运动量自动分割: 静止→运动→静止（无需握拳协议）
-- [x] 指尖速度 > motion_threshold 触发录制
-- [x] 连续静止 still_frames 帧 → 结束手势 → 匹配
-- [x] 多模板存储 + DBA 平均 + fastdtw 匹配
-- [x] 平移不变性：每帧减去手腕坐标 + 原子写入 templates.json
+### 3.1 DTW 匹配器 (`recognition/dtw_matcher.py`)
+- [x] 运动量自动分割: 静止→运动→静止（食指指尖速度 > motion_threshold）
+- [x] `motion_threshold=0.012` (~8px/帧), `still_frames=15` (~0.5s)
+- [x] `max_record_frames=180` (~6s), `min_record_frames=15`
+- [x] fastdtw 匹配 (radius=10), 路径长度归一化
+- [x] **每模板自适应阈值**: `self_distance × 2.0` (注册时自动计算 3 次录制的平均 DTW 距离)
+- [x] 全局 `match_threshold=50.0` 作为天花板
+- [x] 平移不变性：每帧减去手腕坐标
+- [x] 原子写入 templates.json (mkstemp + os.replace)
+- [x] 冷却 90 帧 (~3s) 防止重复触发
 
-### 3.2 注册流程 ✅ 2026-07-07 (重构)
-- [x] 托盘菜单 + 控制面板 DTW 标签页双入口
-- [x] 运动量分割（与匹配器统一协议）
-- [x] 首次 5s + 后续 3s 倒计时，中文引导
-- [x] 3 次录制 → DBA 平均 → 自动保存 + UI 刷新
-- [x] 快捷键下拉选择器（20+ 预置热键）
+### 3.2 DTW 训练器 (`recognition/dtw_trainer.py`)
+- [x] 3 次录制 → DBA 平均 (5 轮迭代)
+- [x] 倒计时: 首次 8s, 后续 5s
+- [x] 录制引导: "开始! 做手势 (做完保持静止)" → "录制中... N 帧 (完成后静止)" → "静止确认... N"
+- [x] 超时/太短 → 自动清除事件，不会卡死轮询
+- [x] `self_distance` 存入模板 → 自动计算匹配阈值
 
-### 3.3 自定义手势触发 ✅ 2026-07-07 (重构)
-- [x] 静止→运动→静止 自动识别 → DTW 匹配 → key_combo 触发
-- [x] 统一控制面板管理/删除模板
-- [x] 实时 DTW 状态预览（红色文字）
-
----
-
-## Phase 4: 精修与增强 🔧 部分完成
-
-### 4.0 Phase 2/3 精修 ✅ 2026-07-06
-- [x] FIST/PINCH 判定优先级修复（FIST → PINCH → TWO_FINGER → PALM）
-- [x] ONNX 每帧推理（去掉 5 帧跳帧）
-- [x] 双指滚动灵敏度 40.0→2.0 + 死区 0.03
-- [x] 日志噪音优化（DEBUG 间隔 5→300 帧）
-- [x] 训练数据量可调（--frames 参数）
-- [x] 独立测试集支持（evaluate + test_dir）
-- [x] config set/save 运行时持久化
-- [x] InputController 键盘快捷键模拟
-
-### 4.1 诊断面板 ✅ 2026-07-07
-- [x] 预览画面上叠加实时诊断：FPS、死区模式(NORM/TAP)、推理源(ONNX/RULE) + 置信度
-- [x] 实时叠加层：关键点、手势标签、DTW状态、诊断信息
-
-### 4.2 自动恢复 ✅ 2026-07-07
-- [x] 摄像头无限重连（移除 max_attempts 限制）
-- [x] 手部重检测日志通知
-- [ ] 光线恢复自动降低检测阈值（后续）
-
-### 4.3 设置 GUI 面板 ✅ 2026-07-07
-- [x] 光标灵敏度滑块、滚动灵敏度滑块、滚动死区滑块
-- [x] 右键模式单选
-- [x] ONNX 接管阈值滑块
-- [x] 所有修改即时生效（滑块拖动即更新）
-
-### 4.4 多显示器支持 ✅ 2026-07-07
-- [x] 虚拟桌面检测 (SM_CXVIRTUALSCREEN)
-- [x] 光标跨屏移动
-
-### 4.5 UI 统一控制面板 ✅ 2026-07-07
-- [x] 单一 Tk root + Toplevel 架构（消除 Tcl apartment 冲突）
-- [x] 4 标签页: System / Mouse / Gesture / DTW
-- [x] 实时诊断: FPS/推理源/DTW 状态
-- [x] 14 个滑块即时生效 + Save to Config 持久化
-- [x] DTW 模板管理 + 快捷键选择器
-
-### 4.6 SINGLE_FINGER 单指手势 ✅ 2026-07-07
-- [x] 手势枚举新增 SINGLE_FINGER（食指独伸，其余卷曲）
-- [x] PALM_OPEN 移除空中点击；SINGLE_FINGER 独占点击
-- [x] 6 类 ONNX 模型 (99.2% 准确率)
-- [x] 采集流程 5→6 类
-
-### 4.7 模型测试程序 ✅ 2026-07-07
-- [x] `training/model_test.py` — ONNX/PyTorch 评估
-- [x] 输出: 准确率/混淆矩阵/Precision/Recall/F1
+### 3.3 注册与管理
+- [x] 控制面板 DTW 标签页: Name 输入框 + 快捷键选择器 + Register/Delete 按钮
+- [x] 托盘菜单 "Register Gesture" 快捷入口
+- [x] 注册后自动刷新模板列表 + 按钮恢复
+- [x] 训练中状态轮询 (300ms) + 异常兜底
 
 ---
 
-## 代码质量审查 ✅ 2026-07-07
+## Phase 4: 精修与增强 ✅ 已完成
 
-全项目代码审查，修复 10 个问题：
+### 4.1 点击系统重构 (2026-07-07)
+- [x] AirTapDetector 手势门控: 仅 SINGLE_FINGER/FIST 时运行 (消除 PALM_OPEN 误触)
+- [x] 武装锁存状态机: 手势丢失后 15 帧内仍可消费 tap (防点击弯曲掉手势)
+- [x] Tap 消费后立即 disarm (防双击)
+- [x] 右键修复: FIST 手势也跑 tap 检测器
+- [x] 阈值下调: tap_threshold 0.3→0.20, min_bend 0.15→0.10
+- [x] 实测转化率: 100% (8/8), bend 值从 0.234~0.510 降至 0.111~0.265
 
-| # | 问题 | 修复 |
+### 4.2 手势引擎归一化 (2026-07-07)
+- [x] 指尖-MCP 距离归一化: 除以 hand_scale (wrist→middle_MCP), 摄像头距离不变
+- [x] open_ratio: 0.25(绝对)→0.70(比例), fist_ratio: 0.12→0.45
+- [x] SINGLE_FINGER 判定优化: 移除拇指检查, 中/无名指宽松阈值(0.60/0.55), 食指指数优势(>1.3x中指)
+- [x] FIST 护盾: 食指优势时不抢 SINGLE_FINGER (防点击弯曲误判)
+- [x] 捏合归一化复用 hand_scale 避免重复计算
+
+### 4.3 基础设施修复 (2026-07-07)
+- [x] tkinter 跨线程: Queue + after 轮询 (修复 "main thread not in main loop")
+- [x] Config JSON 竞态: reload 重试 + watchdog 0.5s 防抖
+- [x] fastdtw 安装 + 一次性告警 (修复 DTW 静默降级为欧氏距离)
+- [x] 日志 TRACE 级别: `--trace` CLI, 逐帧数据从 DEBUG 迁出, 默认 INFO
+- [x] 系统托盘退出: quit_app→tray.stop(), shutdown() 仅在主线程 finally 执行一次
+- [x] Tk 线程优雅退出: `_ui_queue.put("stop")` → root.quit()
+
+### 4.4 模型重训 (2026-07-07)
+- [x] 6 类 ONNX: 20,500 样本, val_acc 100%, 测试集 99.98%
+- [x] SINGLE_FINGER 增量 2000 帧
+
+### 4.5 工具脚本 (2026-07-07)
+- [x] `start_collector_single.bat` — 单指专用采集
+- [x] `start_train.bat` — 训练+导出 ONNX
+- [x] `start_test.bat` — ONNX+PyTorch 双模型测试
+- [x] guided_collector `--gestures` 参数
+
+### 4.6 代码质量 (2026-07-07)
+- [x] 52 单元测试全过 (air_tap/gesture_engine/pinch/cursor/dtw/main/config)
+- [x] 线程安全: Lock + Event + try/finally
+- [x] 原子写入: mkstemp + os.replace
+- [x] 异常处理: 训练完成/超时/失败 均有 event 清除路径
+
+---
+
+## 代码质量 ✅
+
+全项目累计 52 单元测试。关键修复：
+
+| # | 类别 | 修复 |
 |---|------|------|
-| 1 | 零测试覆盖 | 47 个单元测试 (air_tap/gesture_engine/pinch/cursor/dtw) |
-| 2 | _run_loop 静默吞异常 | 计数器 + 10s 节流日志 |
-| 3 | config.json vs 代码默认值 6 处不一致 | 统一默认值 |
-| 4 | 资源泄漏（guided_collector/hagrid/jester） | try/finally + context manager |
-| 5 | 线程竞态（tracking + trainer） | Lock + threading.Event |
-| 6 | key_combo 按键卡死 | try/finally 保证释放 |
-| 7 | templates.json 直接写入 → 损坏风险 | 原子写入 (mkstemp + os.replace) |
-| 8 | shutdown() 无异常保护 | try/except 保护 tray.stop() |
-| 9 | 线程 join 无超时检查 | 超时后 WARNING 日志 |
-| 10 | 未使用配置 cursor_freeze_timeout | 清理 |
+| 1 | 测试 | 52 个单元测试 (air_tap 6, gesture_engine 14, pinch 6, cursor 8, dtw 12, config 1, main 3, 其他) |
+| 2 | 异常处理 | _run_loop 计数+节流, shutdown() try/except, key_combo try/finally |
+| 3 | 线程安全 | Lock + Event, Tk Queue 轮询, 训练完成/超时 event 清除 |
+| 4 | 资源管理 | try/finally + context manager (capture/detector) |
+| 5 | 原子写入 | templates.json (mkstemp + os.replace), Config.save() |
+| 6 | 配置一致性 | 统一 config.json 与代码默认值 |
+| 7 | 日志分级 | TRACE→DEBUG→INFO→WARNING→ERROR 五级 |
 
 ---
 
@@ -312,17 +273,13 @@ microgesture/
 opencv-python>=4.8
 mediapipe>=0.10
 numpy>=1.24
-pyautogui>=0.9.54
 pystray>=0.19
 pillow>=10.0
-
-# 配置与日志
 watchdog>=3.0
 
 # Phase 2 训练与推理
 torch>=2.0
 onnxruntime>=1.15
-onnx>=1.14
 
 # Phase 3 DTW
 fastdtw>=0.3
@@ -333,26 +290,36 @@ pytest>=7.0
 
 ---
 
-## 验证方案
+## 启动命令
 
-### Phase 1 验证
-1. 运行 `python -m microgesture.main`
-2. 系统托盘出现图标，绿色表示摄像头正常
-3. 手掌张开，移动食指 → 光标跟随移动
-4. 拇食指捏合 → 进入拖拽模式，可拖拽窗口
-5. 食指向前快速点按 → 触发单击
-6. 握拳冻结 → 光标停止移动
-7. 握拳冻结态下点按 → 右键菜单出现
-8. 双指伸出上下移动 → 页面滚动
-9. 托盘切换灵敏度 → 光标响应速度变化
+```bash
+# 日常使用 (INFO 级别)
+python -m microgesture.main
 
-### Phase 2 验证
-1. 运行采集工具录50帧/手势
-2. 训练分类器，准确率 > 95%（测试集）
-3. 影子模式下分类器置信度持续高于规则引擎
-4. 自动切换后交互行为不变或改善
+# 调试 (Inference 摘要 + DTW 详情)
+python -m microgesture.main --debug
 
-### Phase 3 验证
-1. 注册一个自定义手势（如画圈→截图）
-2. 在握拳冻结态下执行该手势 → 触发截图
-3. 未注册手势不误触发
+# 逐帧跟踪 (每帧手势数据)
+python -m microgesture.main --trace
+
+# 采集单指数据
+start_collector_single.bat [帧数]
+
+# 训练模型
+start_train.bat
+
+# 测试模型
+start_test.bat
+```
+
+---
+
+## 手势→事件映射 (当前)
+
+| 手势 | 光标 | 点击 | 其他 |
+|------|------|------|------|
+| PALM_OPEN | 移动 | — | 捏合拖拽 |
+| SINGLE_FINGER | 冻结 | 左键 (AirTapDetector + 武装锁存) | — |
+| FIST | 冻结 | 右键 (fist_tap 模式) | DTW 触发 |
+| TWO_FINGER | 冻结 | — | 垂直滚动 |
+| PINCH | 移动 | — | — |
